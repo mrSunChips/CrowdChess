@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdChess - Chess Voting System</title>
+    
+    <!-- Chess board libraries -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+    
+    <!-- Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CrowdChess</h1>
+            <p>A crowd-sourced chess voting system</p>
+        </header>
+        
+        <div class="connection-status" id="connection-status">
+            Connecting to server...
+        </div>
+        
+        <div class="content">
+            <!-- Chess board section -->
+            <div class="chess-container">
+                <div id="board" class="board"></div>
+                
+                <div class="game-info">
+                    <div class="game-status">
+                        <span id="status-indicator" class="status-indicator status-waiting"></span>
+                        <span id="game-status">Waiting for a game</span>
+                    </div>
+                    <p><strong>Game ID:</strong> <span id="game-id">Not connected</span></p>
+                    <p><strong>Current Turn:</strong> <span id="current-turn">White</span></p>
+                </div>
+                
+                <div class="game-controls">
+                    <h3>Game Controls</h3>
+                    
+                    <div class="control-buttons">
+                        <button id="create-ai-challenge" class="btn btn-success">Play vs AI</button>
+                        <select id="ai-level" class="select">
+                            <option value="1">Level 1</option>
+                            <option value="2">Level 2</option>
+                            <option value="3">Level 3</option>
+                            <option value="4">Level 4</option>
+                            <option value="5">Level 5</option>
+                            <option value="6">Level 6</option>
+                            <option value="7">Level 7</option>
+                            <option value="8">Level 8</option>
+                        </select>
+                    </div>
+                    
+                    <div class="control-buttons">
+                        <button id="create-open-challenge" class="btn">Create Open Challenge</button>
+                    </div>
+                    
+                    <div class="control-buttons">
+                        <input type="text" id="game-id-input" placeholder="Enter a game ID">
+                        <button id="connect-to-game" class="btn">Connect to Game</button>
+                    </div>
+                    
+                    <div id="challenge-url-container" style="display: none;" class="challenge-url-container">
+                        <!-- Challenge URL will be displayed here -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Voting section -->
+            <div class="voting-container">
+                <div class="voting-header">
+                    <h2>Vote for the next move</h2>
+                </div>
+                
+                <div class="timer-container">
+                    <p>Time remaining to vote:</p>
+                    <div class="timer" id="timer">00:00</div>
+                </div>
+                
+                <div id="vote-options" class="vote-options">
+                    <p>Waiting for the game to start...</p>
+                </div>
+                
+                <button class="vote-button" id="vote-button" disabled>Submit Vote</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- External libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- Custom JS -->
+    <script src="js/main.js"></script>
+</body>
+</html>

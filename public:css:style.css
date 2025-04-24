@@ -1,0 +1,321 @@
+/* Basic reset and page styling */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Roboto', Arial, sans-serif;
+  line-height: 1.6;
+  color: #333;
+  background-color: #f4f4f4;
+  padding: 20px;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+header {
+  background-color: #2c3e50;
+  color: #fff;
+  padding: 20px;
+  text-align: center;
+}
+
+header h1 {
+  margin-bottom: 10px;
+}
+
+/* Main content layout */
+.content {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 20px;
+  gap: 20px;
+}
+
+/* Chess board section */
+.chess-container {
+  flex: 1;
+  min-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.board {
+  width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
+  border: 2px solid #2c3e50;
+  border-radius: 4px;
+}
+
+/* Game controls */
+.game-controls {
+  margin-top: 20px;
+  width: 100%;
+  max-width: 500px;
+  background-color: #f9f9f9;
+  padding: 15px;
+  border-radius: 5px;
+}
+
+.control-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.btn {
+  padding: 10px 15px;
+  background-color: #3498db;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.2s;
+}
+
+.btn:hover {
+  background-color: #2980b9;
+}
+
+.btn:disabled {
+  background-color: #95a5a6;
+  cursor: not-allowed;
+}
+
+.btn-success {
+  background-color: #2ecc71;
+}
+
+.btn-success:hover {
+  background-color: #27ae60;
+}
+
+.btn-danger {
+  background-color: #e74c3c;
+}
+
+.btn-danger:hover {
+  background-color: #c0392b;
+}
+
+/* Game info display */
+.game-info {
+  margin-top: 20px;
+  width: 100%;
+  max-width: 500px;
+  background-color: #f9f9f9;
+  padding: 15px;
+  border-radius: 5px;
+}
+
+.game-status {
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.status-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.status-active {
+  background-color: #2ecc71;
+}
+
+.status-waiting {
+  background-color: #f39c12;
+}
+
+.status-ended {
+  background-color: #e74c3c;
+}
+
+/* Voting section */
+.voting-container {
+  flex: 1;
+  min-width: 400px;
+}
+
+.voting-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.timer-container {
+  text-align: center;
+  margin: 20px 0;
+  padding: 15px;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+}
+
+.timer {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+/* Vote options */
+.vote-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 10px;
+  margin-bottom: 20px;
+}
+
+.vote-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-left: 4px solid transparent;
+}
+
+.vote-option:hover {
+  background-color: #eef2f7;
+  transform: translateX(3px);
+}
+
+.vote-option.selected {
+  background-color: #d4e6f1;
+  border-left: 4px solid #3498db;
+}
+
+.vote-move-text {
+  font-weight: bold;
+}
+
+.vote-count {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 30px;
+  padding: 0 10px;
+  background-color: #3498db;
+  color: white;
+  border-radius: 15px;
+  font-weight: bold;
+}
+
+.vote-button {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin-top: 20px;
+  background-color: #2ecc71;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.vote-button:hover {
+  background-color: #27ae60;
+}
+
+.vote-button:disabled {
+  background-color: #95a5a6;
+  cursor: not-allowed;
+}
+
+/* Connection status */
+.connection-status {
+  text-align: center;
+  padding: 10px;
+  margin-bottom: 20px;
+  border-radius: 5px;
+  font-weight: bold;
+}
+
+.connected {
+  background-color: #d4efdf;
+  color: #27ae60;
+}
+
+.disconnected {
+  background-color: #f9ebea;
+  color: #c0392b;
+}
+
+/* Challenge URL display */
+.challenge-url {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: #eaf2f8;
+  border-radius: 5px;
+  word-break: break-all;
+}
+
+.challenge-url a {
+  color: #3498db;
+  font-weight: bold;
+}
+
+/* Notifications */
+.notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 15px 20px;
+  background-color: #2ecc71;
+  color: white;
+  border-radius: 5px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  opacity: 0;
+  transform: translateY(-10px);
+  z-index: 1000;
+}
+
+.notification.error {
+  background-color: #e74c3c;
+}
+
+.notification.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .content {
+    flex-direction: column;
+  }
+  
+  .chess-container, .voting-container {
+    min-width: 100%;
+  }
+  
+  .board {
+    max-width: 100%;
+  }
+}
