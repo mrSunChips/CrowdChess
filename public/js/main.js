@@ -1,41 +1,179 @@
 // Initialize socket.io connection
 const socket = io();
 
-// Chess board configuration
+// Chess board configuration and game state
 let board = null;
 let game = new Chess();
+let selectedPiece = null;
 let selectedMove = null;
 let votingEndTime = null;
 let timerInterval = null;
 let hasVoted = false;
+let yourVote = null;
+let boardOrientation = 'white';
+let isVotingPeriod = false;
+let legalMovesMap = {};
 
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
-const gameIdDisplay = document.getElementById('game-id');
 const gameStatus = document.getElementById('game-status');
 const statusIndicator = document.getElementById('status-indicator');
 const currentTurn = document.getElementById('current-turn');
 const timerDisplay = document.getElementById('timer');
-const voteOptionsContainer = document.getElementById('vote-options');
+const selectedMoveDisplay = document.getElementById('selected-move');
+const voteListContainer = document.getElementById('vote-list');
 const voteButton = document.getElementById('vote-button');
-const challengeThatsjustchipsBtn = document.getElementById('challenge-thatsjustchips');
-const challengeUrlContainer = document.getElementById('challenge-url-container');
 const gameStatusMessage = document.getElementById('game-status-message');
 
 // Initialize the chess board
 function initializeBoard() {
     // Board configuration
     const config = {
-        draggable: false,
+        draggable: false, // We'll handle our own piece selection
         position: 'start',
-        pieceTheme: 'https://lichess1.org/assets/piece/cburnett/{piece}.svg'
+        pieceTheme: 'https://lichess1.org/assets/piece/cburnett/{piece}.svg',
+        orientation: boardOrientation
     };
     
     // Initialize the chess board
     board = Chessboard('board', config);
     
+    // Add click event listeners for squares
+    setupBoardClickHandlers();
+    
     // Adjust board size on window resize
     window.addEventListener('resize', board.resize);
+}
+
+// Set up click handlers for the chess board
+function setupBoardClickHandlers() {
+    // Select all squares on the board
+    const squares = document.querySelectorAll('.square-55d63');
+    
+    // Add click event listeners to each square
+    squares.forEach(square => {
+        square.addEventListener('click', (event) => {
+            // Only enable clicks during voting period
+            if (!isVotingPeriod) return;
+            
+            // Get the square name (e.g., "e4")
+            const squareName = square.getAttribute('data-square');
+            handleSquareClick(squareName);
+        });
+    });
+}
+
+// Handle a click on a chess square
+function handleSquareClick(square) {
+    console.log('Square clicked:', square);
+    
+    // If a piece is already selected, try to move it
+    if (selectedPiece) {
+        tryMove(selectedPiece, square);
+    } else {
+        // Otherwise, try to select a piece
+        selectPiece(square);
+    }
+}
+
+// Try to select a piece
+function selectPiece(square) {
+    // Get the piece at the clicked square
+    const piece = game.get(square);
+    
+    // Only select pieces of the current turn color
+    if (piece && piece.color === game.turn()) {
+        selectedPiece = square;
+        
+        // Highlight the selected square
+        highlightSquare(square, 'highlight-square');
+        
+        // Highlight legal moves for this piece
+        highlightLegalMoves(square);
+        
+        // Update selected move display
+        selectedMoveDisplay.innerHTML = `<p>Selected: ${getPieceName(piece)} at ${square.toUpperCase()}. Click on a destination square.</p>`;
+        selectedMoveDisplay.classList.add('active');
+    }
+}
+
+// Try to move a piece
+function tryMove(from, to) {
+    // Check if the move is legal
+    const moveUci = from + to;
+    const isLegal = legalMovesMap[moveUci];
+    
+    // Clear current highlights
+    clearHighlights();
+    
+    if (isLegal) {
+        // Set the selected move
+        selectedMove = moveUci;
+        
+        // Update the display
+        const piece = game.get(from);
+        selectedMoveDisplay.innerHTML = `<p>Ready to vote: ${getPieceName(piece)} ${from.toUpperCase()} → ${to.toUpperCase()}</p>`;
+        
+        // Enable vote button
+        voteButton.disabled = false;
+    } else {
+        // Reset selection
+        selectedPiece = null;
+        selectedMove = null;
+        selectedMoveDisplay.innerHTML = `<p>Invalid move. Click on a piece to select it.</p>`;
+        selectedMoveDisplay.classList.remove('active');
+    }
+}
+
+// Get the name of a chess piece
+function getPieceName(piece) {
+    if (!piece) return '';
+    
+    const pieceNames = {
+        'p': 'Pawn',
+        'n': 'Knight',
+        'b': 'Bishop',
+        'r': 'Rook',
+        'q': 'Queen',
+        'k': 'King'
+    };
+    
+    return pieceNames[piece.type] || 'Piece';
+}
+
+// Highlight a square with a specific class
+function highlightSquare(square, className) {
+    const highlightClass = className || 'highlight-square';
+    $(`#board .square-${square}`).addClass(highlightClass);
+}
+
+// Highlight legal moves for a selected piece
+function highlightLegalMoves(square) {
+    // Find all legal moves for this piece
+    for (const [moveUci, move] of Object.entries(legalMovesMap)) {
+        if (moveUci.substring(0, 2) === square) {
+            // This is a legal move for the selected piece
+            const targetSquare = moveUci.substring(2, 4);
+            highlightSquare(targetSquare, 'highlight-legal');
+        }
+    }
+}
+
+// Clear all highlights from the board
+function clearHighlights() {
+    $('.square-55d63').removeClass('highlight-square highlight-legal');
+    selectedPiece = null;
+}
+
+// Create map of legal moves
+function createLegalMovesMap(legalMoves) {
+    legalMovesMap = {};
+    
+    for (const move of legalMoves) {
+        legalMovesMap[move.uci] = move.move;
+    }
+    
+    console.log('Legal moves map created:', legalMovesMap);
 }
 
 // Socket event handlers
@@ -56,45 +194,86 @@ socket.on('disconnect', () => {
 
 // Game state update
 socket.on('gameState', (state) => {
+    console.log('Game state update received:', state);
     updateGameState(state);
 });
 
 // Voting period start
 socket.on('votingStarted', (data) => {
+    console.log('Voting period started:', data);
     startVotingPeriod(data);
 });
 
 // Vote updates
 socket.on('votesUpdated', (votes) => {
-    updateVoteCounts(votes);
+    console.log('Votes updated:', votes);
+    updateVoteList(votes);
 });
 
 // Vote acceptance/rejection
 socket.on('voteAccepted', (data) => {
     hasVoted = true;
+    yourVote = data.move;
     voteButton.disabled = true;
     voteButton.textContent = 'Vote Submitted!';
     showNotification('Your vote has been recorded!');
+    
+    // Update the selected move display
+    const from = data.move.substring(0, 2);
+    const to = data.move.substring(2, 4);
+    const piece = game.get(from);
+    
+    selectedMoveDisplay.innerHTML = `<p>Your vote: ${getPieceName(piece)} ${from.toUpperCase()} → ${to.toUpperCase()}</p>`;
+    updateVoteList(null, yourVote); // Update the vote list highlighting
 });
 
 socket.on('voteRejected', (data) => {
     showNotification(`Vote rejected: ${data.reason}`, true);
 });
 
-// Challenge results
-socket.on('challengeResult', (result) => {
-    if (result.success) {
-        showNotification('Challenge sent to thatsjustchips!');
-        updateGameStatusMessage('Challenge sent to thatsjustchips. Waiting for acceptance...');
-    } else {
-        showNotification(`Failed to create challenge: ${result.message}`, true);
-        updateGameStatusMessage(`Failed to create challenge: ${result.message}`);
-    }
+// Game connection events
+socket.on('gameConnected', (data) => {
+    showNotification(`Connected to game ${data.gameId}`);
+    updateGameStatusMessage('Game connected. Waiting for the first move...');
 });
 
-socket.on('challengeCreated', (result) => {
-    // This is broadcast to all clients
-    updateGameStatusMessage('Challenge sent to thatsjustchips. Waiting for acceptance...');
+socket.on('gameEnded', (data) => {
+    clearInterval(timerInterval);
+    votingEndTime = null;
+    isVotingPeriod = false;
+    updateGameStatus('ended', 'Game over');
+    updateGameStatusMessage('Game over. The match has ended.');
+    showNotification('Game has ended');
+    
+    // Reset UI elements
+    voteButton.disabled = true;
+    hasVoted = false;
+    yourVote = null;
+    selectedMoveDisplay.innerHTML = `<p>Game has ended.</p>`;
+    selectedMoveDisplay.classList.remove('active');
+});
+
+socket.on('gameError', (data) => {
+    showNotification(`Game error: ${data.error}`, true);
+    updateGameStatusMessage(`Error with the game: ${data.error}`);
+});
+
+// No active game notification
+socket.on('noActiveGame', () => {
+    updateGameStatus('waiting', 'Waiting for a game');
+    updateGameStatusMessage('No active game. Waiting for a challenge from thatsjustchips...');
+});
+
+// Move selection notification
+socket.on('moveSelected', (data) => {
+    let message;
+    if (data.random) {
+        message = `No votes received. Random move selected: ${formatMove(data.move)}`;
+    } else {
+        message = `Move selected: ${formatMove(data.move)} with ${data.votes} votes`;
+    }
+    showNotification(message);
+    updateGameStatusMessage(message);
 });
 
 // Challenge events
@@ -108,66 +287,32 @@ socket.on('challengeAccepted', (data) => {
     updateGameStatusMessage('Challenge accepted! Game starting...');
 });
 
-socket.on('challengeCanceled', (challenge) => {
-    showNotification(`Challenge was canceled`, true);
-    updateGameStatusMessage('Challenge was canceled.');
-});
-
-socket.on('challengeDeclined', (challenge) => {
-    showNotification(`Challenge was declined`, true);
-    updateGameStatusMessage('Challenge was declined.');
-});
-
-// Game status
-socket.on('gameStatus', (status) => {
-    if (status.inProgress && status.gameId) {
-        gameIdDisplay.textContent = status.gameId;
-        updateGameStatus('active', 'Game in progress');
-        updateGameStatusMessage('Game in progress. Enjoy!');
-        
-        if (status.fen) {
-            game.load(status.fen);
-            board.position(game.fen());
-        }
-    } else {
-        updateGameStatus('waiting', 'Waiting for a game to start');
-        updateGameStatusMessage('No active game. Click "Challenge thatsjustchips" to start a new game.');
-    }
-});
-
-// Game ended
-socket.on('gameEnded', (data) => {
-    clearInterval(timerInterval);
-    votingEndTime = null;
-    updateGameStatus('ended', 'Game over');
-    updateGameStatusMessage('Game over. Click "Challenge thatsjustchips" to start a new game.');
-    showNotification('Game has ended');
-    
-    // Reset UI elements
-    voteOptionsContainer.innerHTML = '<p>Game has ended. Start a new game to continue.</p>';
-    voteButton.disabled = true;
-    hasVoted = false;
-});
-
 // Update the game state
 function updateGameState(state) {
-    if (state.gameId) {
-        gameIdDisplay.textContent = state.gameId;
-        updateGameStatus('active', 'Game in progress');
-    }
+    console.log('Updating game state with FEN:', state.fen);
     
     if (state.fen) {
-        game.load(state.fen);
-        board.position(game.fen());
+        // Load the new position
+        game = new Chess(state.fen);
+        board.position(state.fen);
         
         // Update current turn
         const turn = state.turn === 'w' ? 'White' : 'Black';
         currentTurn.textContent = turn;
-    }
-    
-    // Update legal moves
-    if (state.legalMoves) {
-        updateMoveOptions(state.legalMoves, state.votes || {});
+        
+        // Update game status
+        if (state.inProgress) {
+            updateGameStatus('active', 'Game in progress');
+        }
+        
+        // Create map of legal moves if provided
+        if (state.legalMoves) {
+            createLegalMovesMap(state.legalMoves);
+        }
+        
+        // Update board orientation to match the bot's color (we want user to interact with bot's pieces)
+        // This would need to be determined from the server
+        // For now, we'll leave it as white
     }
     
     // Update voting timer
@@ -181,151 +326,111 @@ function updateGameState(state) {
     // Update game status
     if (state.isGameOver) {
         updateGameStatus('ended', 'Game over');
-        updateGameStatusMessage('Game over. Click "Challenge thatsjustchips" to start a new game.');
+        updateGameStatusMessage('Game over. The match has ended.');
         clearInterval(timerInterval);
+        isVotingPeriod = false;
     } else if (state.isCheck) {
-        // We could highlight the king here
         if (state.isCheckmate) {
             updateGameStatus('ended', 'Checkmate');
-            updateGameStatusMessage('Checkmate! Game over. Click "Challenge thatsjustchips" to start a new game.');
+            updateGameStatusMessage('Checkmate! Game over.');
+            isVotingPeriod = false;
+        } else {
+            updateGameStatusMessage('Check!');
         }
     }
 }
 
 // Start a new voting period
 function startVotingPeriod(data) {
+    isVotingPeriod = true;
     votingEndTime = data.endTime;
+    selectedPiece = null;
     selectedMove = null;
     hasVoted = false;
+    yourVote = null;
     
-    updateMoveOptions(data.legalMoves, {});
+    // Create map of legal moves
+    createLegalMovesMap(data.legalMoves);
+    
+    // Reset the vote button
+    voteButton.disabled = true;
+    voteButton.textContent = 'Submit Vote';
+    
+    // Update the selected move display
+    selectedMoveDisplay.innerHTML = `<p>Click on a piece to select it, then click on a destination square.</p>`;
+    selectedMoveDisplay.classList.remove('active');
     
     // Reset and start timer
     clearInterval(timerInterval);
     updateTimer();
     timerInterval = setInterval(updateTimer, 1000);
     
-    // Enable vote button
-    voteButton.disabled = false;
-    voteButton.textContent = 'Submit Vote';
+    // Setup board click handlers again (in case the board was redrawn)
+    setupBoardClickHandlers();
+    
+    // Reset vote list
+    voteListContainer.innerHTML = '<p>No votes yet</p>';
     
     showNotification('Voting has started! Choose your move');
-}
-
-// Update move options in the UI
-function updateMoveOptions(moves, votes) {
-    voteOptionsContainer.innerHTML = '';
-    
-    if (moves.length === 0) {
-        voteOptionsContainer.innerHTML = '<p>No legal moves available.</p>';
-        return;
-    }
-    
-    for (const move of moves) {
-        const moveElement = document.createElement('div');
-        moveElement.className = 'vote-option';
-        if (move === selectedMove) {
-            moveElement.className += ' selected';
-        }
-        
-        // Convert from UCI format (e2e4) to more readable format
-        const from = move.substring(0, 2);
-        const to = move.substring(2, 4);
-        const promotion = move.length > 4 ? move.substring(4, 5) : null;
-        
-        // Get move information for display
-        const moveText = formatMove(from, to, promotion);
-        
-        moveElement.innerHTML = `
-            <div class="vote-move-text">${moveText}</div>
-            <div class="vote-count">${votes[move] || 0}</div>
-        `;
-        
-        moveElement.addEventListener('click', () => {
-            selectMove(move);
-        });
-        
-        voteOptionsContainer.appendChild(moveElement);
-    }
+    updateGameStatusMessage('Your turn to vote! Select a piece and destination.');
 }
 
 // Format a move for display
-function formatMove(from, to, promotion) {
-    // Get piece at the 'from' square
+function formatMove(moveUci) {
+    if (!moveUci || moveUci.length < 4) return moveUci;
+    
+    const from = moveUci.substring(0, 2);
+    const to = moveUci.substring(2, 4);
     const piece = game.get(from);
-    if (!piece) return `${from} to ${to}`;
+    const pieceName = getPieceName(piece);
     
-    // Determine piece name
-    let pieceName = '';
-    switch (piece.type) {
-        case 'p': pieceName = 'Pawn'; break;
-        case 'n': pieceName = 'Knight'; break;
-        case 'b': pieceName = 'Bishop'; break;
-        case 'r': pieceName = 'Rook'; break;
-        case 'q': pieceName = 'Queen'; break;
-        case 'k': pieceName = 'King'; break;
-    }
-    
-    // Add promotion info if applicable
-    let promotionText = '';
-    if (promotion) {
-        let promotionPiece = '';
-        switch (promotion) {
-            case 'q': promotionPiece = 'Queen'; break;
-            case 'r': promotionPiece = 'Rook'; break;
-            case 'b': promotionPiece = 'Bishop'; break;
-            case 'n': promotionPiece = 'Knight'; break;
-        }
-        promotionText = ` (promote to ${promotionPiece})`;
-    }
-    
-    return `${pieceName} ${from.toUpperCase()} → ${to.toUpperCase()}${promotionText}`;
+    return `${pieceName} ${from.toUpperCase()} → ${to.toUpperCase()}`;
 }
 
-// Select a move to vote for
-function selectMove(move) {
-    if (hasVoted) return;
+// Update the vote list display
+function updateVoteList(votes, highlightMove = null) {
+    if (!votes && !highlightMove) {
+        voteListContainer.innerHTML = '<p>No votes yet</p>';
+        return;
+    }
     
-    selectedMove = move;
-    
-    // Update UI to show selection
-    const options = document.querySelectorAll('.vote-option');
-    options.forEach(option => {
-        option.classList.remove('selected');
-    });
-    
-    // Find and select the right element
-    options.forEach(option => {
-        const from = move.substring(0, 2);
-        const to = move.substring(2, 4);
-        const promotion = move.length > 4 ? move.substring(4, 5) : null;
-        const moveText = formatMove(from, to, promotion);
+    if (votes) {
+        // Sort votes by count (descending)
+        const sortedVotes = Object.entries(votes).sort((a, b) => b[1] - a[1]);
         
-        if (option.querySelector('.vote-move-text').textContent === moveText) {
-            option.classList.add('selected');
+        if (sortedVotes.length === 0) {
+            voteListContainer.innerHTML = '<p>No votes yet</p>';
+            return;
         }
-    });
-}
-
-// Update vote counts in the UI
-function updateVoteCounts(votes) {
-    const options = document.querySelectorAll('.vote-option');
-    
-    options.forEach(option => {
-        const moveText = option.querySelector('.vote-move-text').textContent;
         
-        // Find the corresponding move in our legalMoves
-        for (const [move, voteCount] of Object.entries(votes)) {
-            const from = move.substring(0, 2);
-            const to = move.substring(2, 4);
-            const promotion = move.length > 4 ? move.substring(4, 5) : null;
+        let voteListHTML = '';
+        for (const [move, count] of sortedVotes) {
+            const isYourVote = move === yourVote;
+            const moveDisplay = formatMove(move);
             
-            if (moveText === formatMove(from, to, promotion)) {
-                option.querySelector('.vote-count').textContent = voteCount;
-                break;
-            }
+            voteListHTML += `
+                <div class="vote-item ${isYourVote ? 'your-vote' : ''}">
+                    <span class="vote-item-move">${moveDisplay}</span>
+                    <span class="vote-item-count">${count}</span>
+                </div>
+            `;
         }
-    });
+        
+        voteListContainer.innerHTML = voteListHTML;
+    } else if (highlightMove) {
+        // Just update the highlighting for your vote
+        const voteItems = document.querySelectorAll('.vote-item');
+        voteItems.forEach(item => {
+            item.classList.remove('your-vote');
+            
+            const moveText = item.querySelector('.vote-item-move').textContent;
+            const formattedHighlight = formatMove(highlightMove);
+            
+            if (moveText === formattedHighlight) {
+                item.classList.add('your-vote');
+            }
+        });
+    }
 }
 
 // Update the timer display
@@ -349,6 +454,7 @@ function updateTimer() {
     if (timeLeft === 0) {
         clearInterval(timerInterval);
         voteButton.disabled = true;
+        isVotingPeriod = false;
     }
 }
 
@@ -370,19 +476,10 @@ function updateGameStatusMessage(message) {
 function submitVote() {
     if (selectedMove && !hasVoted) {
         socket.emit('submitVote', selectedMove);
+        clearHighlights();
     } else if (!selectedMove) {
         showNotification('Please select a move first', true);
     }
-}
-
-// Challenge thatsjustchips
-function challengeThatsjustchips() {
-    socket.emit('challengeThatsjustchips');
-    challengeThatsjustchipsBtn.disabled = true;
-    setTimeout(() => {
-        challengeThatsjustchipsBtn.disabled = false;
-    }, 5000); // Re-enable after 5 seconds to prevent spam
-    updateGameStatusMessage('Sending challenge to thatsjustchips...');
 }
 
 // Show notification
@@ -418,9 +515,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeBoard();
     
     // Set initial game status message
-    updateGameStatusMessage('No active game. Click "Challenge thatsjustchips" to start a new game.');
+    updateGameStatusMessage('Waiting for a game to start...');
     
     // Button event listeners
     voteButton.addEventListener('click', submitVote);
-    challengeThatsjustchipsBtn.addEventListener('click', challengeThatsjustchips);
 });
