@@ -49,7 +49,7 @@ app.get('/cors-test', (req, res) => {
 });
 
 // Lichess API configuration
-const LICHESS_API_TOKEN = process.env.LICHESS_API_TOKEN || 'lip_H0Yv7axL7HN0aOly6Q18'; // Fallback to the token from logs if not in env
+const LICHESS_API_TOKEN = process.env.LICHESS_API_TOKEN || 'lip_xZWszoNLAxlp51H5d87u'; // Fallback to the token from logs if not in env
 const LICHESS_API_BASE = 'https://lichess.org/api';
 
 // Check if API token is working
