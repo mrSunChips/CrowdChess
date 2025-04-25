@@ -18,12 +18,9 @@ const currentTurn = document.getElementById('current-turn');
 const timerDisplay = document.getElementById('timer');
 const voteOptionsContainer = document.getElementById('vote-options');
 const voteButton = document.getElementById('vote-button');
-const createAiChallengeBtn = document.getElementById('create-ai-challenge');
-const createOpenChallengeBtn = document.getElementById('create-open-challenge');
-const connectToGameBtn = document.getElementById('connect-to-game');
-const gameIdInput = document.getElementById('game-id-input');
-const aiLevelSelect = document.getElementById('ai-level');
+const challengeThatsjustchipsBtn = document.getElementById('challenge-thatsjustchips');
 const challengeUrlContainer = document.getElementById('challenge-url-container');
+const gameStatusMessage = document.getElementById('game-status-message');
 
 // Initialize the chess board
 function initializeBoard() {
@@ -84,44 +81,41 @@ socket.on('voteRejected', (data) => {
     showNotification(`Vote rejected: ${data.reason}`, true);
 });
 
-// Game connection result
-socket.on('gameConnectionResult', (result) => {
-    if (result.success) {
-        showNotification(`Connected to game ${result.gameId}`);
-    } else {
-        showNotification('Failed to connect to game', true);
-    }
-});
-
 // Challenge results
 socket.on('challengeResult', (result) => {
     if (result.success) {
-        showNotification(`Created game against AI, ID: ${result.gameId}`);
-    } else {
-        showNotification(`Failed to create AI challenge: ${result.message}`, true);
-    }
-});
-
-socket.on('openChallengeResult', (result) => {
-    if (result.success) {
-        showNotification('Open challenge created!');
-        displayChallengeUrl(result.url);
+        showNotification('Challenge sent to thatsjustchips!');
+        updateGameStatusMessage('Challenge sent to thatsjustchips. Waiting for acceptance...');
     } else {
         showNotification(`Failed to create challenge: ${result.message}`, true);
+        updateGameStatusMessage(`Failed to create challenge: ${result.message}`);
     }
 });
 
-socket.on('openChallengeCreated', (result) => {
+socket.on('challengeCreated', (result) => {
     // This is broadcast to all clients
-    displayChallengeUrl(result.url);
+    updateGameStatusMessage('Challenge sent to thatsjustchips. Waiting for acceptance...');
 });
 
-socket.on('acceptChallengeResult', (result) => {
-    if (result.success) {
-        showNotification('Challenge accepted');
-    } else {
-        showNotification(`Failed to accept challenge: ${result.message}`, true);
-    }
+// Challenge events
+socket.on('challengeReceived', (challenge) => {
+    showNotification(`Received challenge from ${challenge.challenger.name}`);
+    updateGameStatusMessage(`Received challenge from ${challenge.challenger.name}. Auto-accepting...`);
+});
+
+socket.on('challengeAccepted', (data) => {
+    showNotification('Challenge accepted! Game starting...');
+    updateGameStatusMessage('Challenge accepted! Game starting...');
+});
+
+socket.on('challengeCanceled', (challenge) => {
+    showNotification(`Challenge was canceled`, true);
+    updateGameStatusMessage('Challenge was canceled.');
+});
+
+socket.on('challengeDeclined', (challenge) => {
+    showNotification(`Challenge was declined`, true);
+    updateGameStatusMessage('Challenge was declined.');
 });
 
 // Game status
@@ -129,6 +123,7 @@ socket.on('gameStatus', (status) => {
     if (status.inProgress && status.gameId) {
         gameIdDisplay.textContent = status.gameId;
         updateGameStatus('active', 'Game in progress');
+        updateGameStatusMessage('Game in progress. Enjoy!');
         
         if (status.fen) {
             game.load(status.fen);
@@ -136,6 +131,7 @@ socket.on('gameStatus', (status) => {
         }
     } else {
         updateGameStatus('waiting', 'Waiting for a game to start');
+        updateGameStatusMessage('No active game. Click "Challenge thatsjustchips" to start a new game.');
     }
 });
 
@@ -144,27 +140,13 @@ socket.on('gameEnded', (data) => {
     clearInterval(timerInterval);
     votingEndTime = null;
     updateGameStatus('ended', 'Game over');
-    showNotification(`Game ${data.gameId} has ended`);
+    updateGameStatusMessage('Game over. Click "Challenge thatsjustchips" to start a new game.');
+    showNotification('Game has ended');
     
     // Reset UI elements
     voteOptionsContainer.innerHTML = '<p>Game has ended. Start a new game to continue.</p>';
     voteButton.disabled = true;
     hasVoted = false;
-});
-
-// Challenge events
-socket.on('challengeReceived', (challenge) => {
-    showNotification(`Received challenge from ${challenge.challenger.name}`);
-});
-
-socket.on('challengeCanceled', (challenge) => {
-    showNotification(`Challenge from ${challenge.challenger.name} was canceled`, true);
-    hideChallengeUrl();
-});
-
-socket.on('challengeDeclined', (challenge) => {
-    showNotification(`Challenge was declined`, true);
-    hideChallengeUrl();
 });
 
 // Update the game state
@@ -199,11 +181,13 @@ function updateGameState(state) {
     // Update game status
     if (state.isGameOver) {
         updateGameStatus('ended', 'Game over');
+        updateGameStatusMessage('Game over. Click "Challenge thatsjustchips" to start a new game.');
         clearInterval(timerInterval);
     } else if (state.isCheck) {
         // We could highlight the king here
         if (state.isCheckmate) {
             updateGameStatus('ended', 'Checkmate');
+            updateGameStatusMessage('Checkmate! Game over. Click "Challenge thatsjustchips" to start a new game.');
         }
     }
 }
@@ -377,20 +361,9 @@ function updateGameStatus(status, message) {
     statusIndicator.classList.add(`status-${status}`);
 }
 
-// Display challenge URL
-function displayChallengeUrl(url) {
-    challengeUrlContainer.style.display = 'block';
-    challengeUrlContainer.innerHTML = `
-        <p>Challenge created! Share this link:</p>
-        <div class="challenge-url">
-            <a href="${url}" target="_blank">${url}</a>
-        </div>
-    `;
-}
-
-// Hide challenge URL
-function hideChallengeUrl() {
-    challengeUrlContainer.style.display = 'none';
+// Update game status message
+function updateGameStatusMessage(message) {
+    gameStatusMessage.innerHTML = `<p>${message}</p>`;
 }
 
 // Submit vote
@@ -402,27 +375,14 @@ function submitVote() {
     }
 }
 
-// Create AI challenge
-function createAIChallenge() {
-    const level = aiLevelSelect.value;
-    socket.emit('createAIChallenge', level);
-    hideChallengeUrl();
-}
-
-// Create open challenge
-function createOpenChallenge() {
-    socket.emit('createOpenChallenge');
-}
-
-// Connect to specific game
-function connectToGame() {
-    const gameId = gameIdInput.value.trim();
-    if (gameId) {
-        socket.emit('connectToGame', gameId);
-        hideChallengeUrl();
-    } else {
-        showNotification('Please enter a game ID', true);
-    }
+// Challenge thatsjustchips
+function challengeThatsjustchips() {
+    socket.emit('challengeThatsjustchips');
+    challengeThatsjustchipsBtn.disabled = true;
+    setTimeout(() => {
+        challengeThatsjustchipsBtn.disabled = false;
+    }, 5000); // Re-enable after 5 seconds to prevent spam
+    updateGameStatusMessage('Sending challenge to thatsjustchips...');
 }
 
 // Show notification
@@ -457,9 +417,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize chess board
     initializeBoard();
     
+    // Set initial game status message
+    updateGameStatusMessage('No active game. Click "Challenge thatsjustchips" to start a new game.');
+    
     // Button event listeners
     voteButton.addEventListener('click', submitVote);
-    createAiChallengeBtn.addEventListener('click', createAIChallenge);
-    createOpenChallengeBtn.addEventListener('click', createOpenChallenge);
-    connectToGameBtn.addEventListener('click', connectToGame);
+    challengeThatsjustchipsBtn.addEventListener('click', challengeThatsjustchips);
 });
