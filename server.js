@@ -49,8 +49,39 @@ app.get('/cors-test', (req, res) => {
 });
 
 // Lichess API configuration
-const LICHESS_API_TOKEN = process.env.LICHESS_API_TOKEN;
+const LICHESS_API_TOKEN = process.env.LICHESS_API_TOKEN || 'lip_H0Yv7axL7HN0aOly6Q18'; // Fallback to the token from logs if not in env
 const LICHESS_API_BASE = 'https://lichess.org/api';
+
+// Check if API token is working
+app.get('/api-status', async (req, res) => {
+  try {
+    const response = await axios({
+      method: 'get',
+      url: `${LICHESS_API_BASE}/account`,
+      headers: {
+        'Authorization': `Bearer ${LICHESS_API_TOKEN}`
+      },
+      timeout: 10000
+    });
+    
+    res.json({
+      status: 'ok',
+      message: 'API token is valid',
+      account: {
+        id: response.data.id,
+        username: response.data.username
+      }
+    });
+  } catch (error) {
+    console.error('API status check failed:', error.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'API token check failed',
+      error: error.message,
+      tokenProvided: !!LICHESS_API_TOKEN
+    });
+  }
+});
 
 // Specific account to auto-accept challenges from
 const ALLOWED_CHALLENGER = 'thatsjustchips';
@@ -72,8 +103,9 @@ let streamReconnectAttempts = 0;
 let botColor = null; // 'white' or 'black'
 let colorDetermined = false;
 let lastGameFullData = null;
+let apiConnectionStatus = 'disconnected';
 
-// Debug endpoint
+// Debug endpoint with enhanced API information
 app.get('/debug', (req, res) => {
   try {
     // Get connected clients count
@@ -113,7 +145,9 @@ app.get('/debug', (req, res) => {
       },
       lichessApiStatus: {
         tokenPresent: !!LICHESS_API_TOKEN,
-        lastApiCallTime: lastEventTime ? new Date(lastEventTime).toISOString() : null
+        tokenFirstChars: LICHESS_API_TOKEN ? `${LICHESS_API_TOKEN.substring(0, 5)}...` : 'none',
+        lastApiCallTime: lastEventTime ? new Date(lastEventTime).toISOString() : null,
+        connectionStatus: apiConnectionStatus
       }
     };
     
@@ -673,6 +707,7 @@ function broadcastGameState() {
 async function streamEvents() {
   try {
     console.log('Starting to stream events from Lichess');
+    console.log(`Using API token: ${LICHESS_API_TOKEN ? 'Token provided' : 'No token found'}`);
     streamReconnectAttempts++;
     
     const response = await axios({
@@ -687,7 +722,9 @@ async function streamEvents() {
 
     // Reset reconnect attempts on successful connection
     streamReconnectAttempts = 0;
+    apiConnectionStatus = 'connected';
     console.log('Successfully connected to Lichess event stream');
+    io.emit('apiStatus', { status: 'connected', message: 'Connected to Lichess API' });
 
     response.data.on('data', (chunk) => {
       try {
@@ -712,12 +749,16 @@ async function streamEvents() {
 
     response.data.on('end', () => {
       console.log('Event stream ended');
+      apiConnectionStatus = 'disconnected';
+      io.emit('apiStatus', { status: 'disconnected', message: 'Lichess API stream ended' });
       // Try to reconnect after a delay
       setTimeout(streamEvents, 5000);
     });
 
     response.data.on('error', (error) => {
       console.error('Event stream error:', error.message);
+      apiConnectionStatus = 'error';
+      io.emit('apiStatus', { status: 'error', message: `API Error: ${error.message}` });
       // Try to reconnect after a delay
       setTimeout(streamEvents, 5000);
     });
@@ -725,11 +766,16 @@ async function streamEvents() {
     console.log('Event stream connected');
   } catch (error) {
     console.error('Error connecting to event stream:', error.message);
+    apiConnectionStatus = 'error';
+    io.emit('apiStatus', { status: 'error', message: `Failed to connect to Lichess API: ${error.message}` });
+    
     if (error.response) {
       console.error('Response status:', error.response.status);
       console.error('Response data:', error.response.data);
     } else if (error.request) {
-      console.error('No response received:', error.request);
+      console.error('No response received:', error.request._currentUrl || 'unknown URL');
+      // Simplified error logging to avoid overly verbose logs
+      console.error('Connection failed, possibly network issue or invalid token');
     } else {
       console.error('Error details:', error.stack);
     }

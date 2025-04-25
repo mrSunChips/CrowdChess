@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdChess Setup</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .setup-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .setup-card {
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .setup-step {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .setup-step h3 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .setup-step p {
+            margin-bottom: 10px;
+        }
+        .token-form {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .btn-primary {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-primary:hover {
+            background-color: #2980b9;
+        }
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .alert-success {
+            background-color: #d4efdf;
+            color: #27ae60;
+        }
+        .alert-danger {
+            background-color: #f9ebea;
+            color: #c0392b;
+        }
+        .status-box {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="setup-container">
+        <header>
+            <h1>CrowdChess Setup</h1>
+            <p>Configure your Lichess API token</p>
+        </header>
+        
+        <div class="setup-card">
+            <div id="status-message"></div>
+            
+            <div class="setup-step">
+                <h3>Step 1: Create a Lichess Bot Account</h3>
+                <p>You need a Lichess account with Bot access to use CrowdChess.</p>
+                <ol>
+                    <li>Register a normal account on <a href="https://lichess.org/signup" target="_blank">Lichess.org</a></li>
+                    <li>Upgrade it to a Bot account by following the <a href="https://lichess.org/api#operation/botAccountUpgrade" target="_blank">Bot Account Upgrade</a> instructions</li>
+                </ol>
+            </div>
+            
+            <div class="setup-step">
+                <h3>Step 2: Generate a Lichess API Token</h3>
+                <p>You need a Personal API Access Token with the following scopes:</p>
+                <ul>
+                    <li><strong>bot:play</strong> - For playing games as a bot</li>
+                    <li><strong>challenge:read</strong> - For reading incoming challenges</li>
+                    <li><strong>challenge:write</strong> - For challenging other players</li>
+                </ul>
+                <p><a href="https://lichess.org/account/oauth/token/create" target="_blank" class="btn-primary">Create Lichess API Token</a></p>
+            </div>
+            
+            <div class="setup-step">
+                <h3>Step 3: Configure Your Token</h3>
+                <p>Add your token to your CrowdChess configuration:</p>
+                
+                <div class="token-form">
+                    <div class="form-group">
+                        <label for="api-token">Lichess API Token:</label>
+                        <input type="text" id="api-token" placeholder="lip_xxxxxxxxxxxxxxxxxxxx">
+                    </div>
+                    
+                    <button id="check-token" class="btn-primary">Test Token</button>
+                    <button id="save-env-file" class="btn-primary">Download .env File</button>
+                </div>
+                
+                <div id="token-status" class="status-box" style="display: none;"></div>
+            </div>
+            
+            <div class="setup-step">
+                <h3>Step 4: Deploy Your Bot</h3>
+                <p>Once you have set up your token, you have two options:</p>
+                <ol>
+                    <li><strong>Run locally</strong>: Save the .env file to your CrowdChess folder and start the server with <code>npm start</code></li>
+                    <li><strong>Deploy to Render</strong>: Add your token as an environment variable named <code>LICHESS_API_TOKEN</code> in the Render dashboard</li>
+                </ol>
+                <a href="/" class="btn-primary">Return to CrowdChess</a>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const checkTokenBtn = document.getElementById('check-token');
+            const saveEnvBtn = document.getElementById('save-env-file');
+            const tokenInput = document.getElementById('api-token');
+            const tokenStatus = document.getElementById('token-status');
+            const statusMessage = document.getElementById('status-message');
+            
+            // Check for existing token in API
+            fetch('/api-status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        statusMessage.innerHTML = `<div class="alert alert-success">
+                            Your server is already connected to Lichess as <strong>${data.account.username}</strong>.
+                        </div>`;
+                    } else {
+                        statusMessage.innerHTML = `<div class="alert alert-danger">
+                            Your server is not connected to Lichess. Please set up an API token.
+                        </div>`;
+                    }
+                })
+                .catch(err => {
+                    statusMessage.innerHTML = `<div class="alert alert-danger">
+                        Could not check API status: ${err.message}
+                    </div>`;
+                });
+            
+            // Test token function
+            checkTokenBtn.addEventListener('click', function() {
+                const token = tokenInput.value.trim();
+                if (!token) {
+                    tokenStatus.style.display = 'block';
+                    tokenStatus.innerHTML = '<div class="alert alert-danger">Please enter a token</div>';
+                    return;
+                }
+                
+                tokenStatus.style.display = 'block';
+                tokenStatus.innerHTML = '<div>Testing token...</div>';
+                
+                fetch('https://lichess.org/api/account', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`API responded with status ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    tokenStatus.innerHTML = `<div class="alert alert-success">
+                        Token is valid! Connected as <strong>${data.username}</strong>
+                    </div>`;
+                })
+                .catch(err => {
+                    tokenStatus.innerHTML = `<div class="alert alert-danger">
+                        Token test failed: ${err.message}
+                    </div>`;
+                });
+            });
+            
+            // Generate and download .env file
+            saveEnvBtn.addEventListener('click', function() {
+                const token = tokenInput.value.trim();
+                if (!token) {
+                    tokenStatus.style.display = 'block';
+                    tokenStatus.innerHTML = '<div class="alert alert-danger">Please enter a token</div>';
+                    return;
+                }
+                
+                const envContent = `# Lichess API token
+LICHESS_API_TOKEN=${token}
+
+# Port for the server to run on (Render uses PORT)
+PORT=3000`;
+                
+                const blob = new Blob([envContent], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = '.env';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                tokenStatus.style.display = 'block';
+                tokenStatus.innerHTML = `<div class="alert alert-success">
+                    .env file downloaded! Place this file in your CrowdChess folder.
+                </div>`;
+            });
+        });
+    </script>
+</body>
+</html> 

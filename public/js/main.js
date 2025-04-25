@@ -22,6 +22,7 @@ let legalMovesMap = {};
 let botColor = null;
 let connectionAttempts = 0;
 let lastGameState = null;
+let apiStatus = 'unknown';
 
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
@@ -34,10 +35,41 @@ const voteListContainer = document.getElementById('vote-list');
 const voteButton = document.getElementById('vote-button');
 const gameStatusMessage = document.getElementById('game-status-message');
 
+// Create API status indicator if it doesn't exist
+let apiStatusElement = document.getElementById('api-status');
+if (!apiStatusElement) {
+    apiStatusElement = document.createElement('div');
+    apiStatusElement.id = 'api-status';
+    apiStatusElement.className = 'api-status unknown';
+    apiStatusElement.textContent = 'Lichess API: Unknown';
+    if (connectionStatus.parentNode) {
+        connectionStatus.parentNode.insertBefore(apiStatusElement, connectionStatus.nextSibling);
+    } else {
+        // Fallback - add to body
+        document.body.appendChild(apiStatusElement);
+    }
+}
+
 // Setup debug logging
 function debugLog(message, data) {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${message}`, data);
+}
+
+// Update API status indicator
+function updateApiStatus(status, message) {
+    apiStatus = status;
+    apiStatusElement.className = `api-status ${status}`;
+    apiStatusElement.textContent = message || `Lichess API: ${status}`;
+    
+    // If API is disconnected, update game status message
+    if (status === 'error' || status === 'disconnected') {
+        if (!gameInProgress) {
+            updateGameStatusMessage(`Lichess API ${status}. Waiting for connection...`);
+        }
+    }
+    
+    debugLog(`API Status updated to ${status}`, { message });
 }
 
 // Initialize the chess board
@@ -227,6 +259,21 @@ socket.on('connect', () => {
     
     // Check if there's an active game
     socket.emit('getGameStatus');
+    
+    // Check API status immediately
+    fetch('/api-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                updateApiStatus('connected', `Lichess API: Connected as ${data.account.username}`);
+            } else {
+                updateApiStatus('error', `Lichess API: ${data.message}`);
+            }
+        })
+        .catch(error => {
+            console.error('Error checking API status:', error);
+            updateApiStatus('error', 'Lichess API: Status check failed');
+        });
 });
 
 socket.on('connect_error', (error) => {
@@ -439,7 +486,15 @@ socket.on('gameError', (data) => {
 socket.on('noActiveGame', () => {
     debugLog('No active game notification received');
     updateGameStatus('waiting', 'Waiting for a game');
-    updateGameStatusMessage('No active game. Waiting for a challenge from thatsjustchips...');
+    
+    // Check API status to give more helpful message
+    if (apiStatus === 'connected') {
+        updateGameStatusMessage('No active game. Waiting for a challenge from thatsjustchips...');
+    } else if (apiStatus === 'error' || apiStatus === 'disconnected') {
+        updateGameStatusMessage(`No active game. Lichess API is ${apiStatus}. Please check your API token.`);
+    } else {
+        updateGameStatusMessage('No active game. Waiting for a challenge...');
+    }
 });
 
 // Move selection notification
@@ -463,6 +518,11 @@ socket.on('challengeReceived', (challenge) => {
 socket.on('challengeAccepted', (data) => {
     showNotification('Challenge accepted! Game starting...');
     updateGameStatusMessage('Challenge accepted! Game starting...');
+});
+
+// Handle API status updates
+socket.on('apiStatus', (data) => {
+    updateApiStatus(data.status, data.message);
 });
 
 // Update the game state
