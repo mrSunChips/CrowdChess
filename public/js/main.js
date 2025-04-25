@@ -182,13 +182,19 @@ function createLegalMovesMap(legalMoves) {
 
 // Update board orientation based on bot color
 function updateBoardOrientation(color) {
-    if (!board || !color) return;
-    
-    // Set the board orientation to match the bot's pieces
-    // This makes it easier for users to interact with the bot's pieces
-    boardOrientation = color;
-    board.orientation(boardOrientation);
-    console.log('Board orientation updated to:', boardOrientation);
+  if (!board || !color) return;
+  
+  // Set the board orientation to see the board from the bot's perspective
+  // This means the bot's pieces will be at the bottom
+  boardOrientation = color;
+  
+  // Update the board orientation
+  board.orientation(boardOrientation);
+  
+  // Re-attach click handlers since the board was redrawn
+  setTimeout(setupBoardClickHandlers, 100);
+  
+  console.log('Board orientation updated to:', boardOrientation);
 }
 
 // Socket event handlers
@@ -209,15 +215,65 @@ socket.on('disconnect', () => {
 
 // Game state update
 socket.on('gameState', (state) => {
-    console.log('Game state update received:', state);
-    
-    // Update bot color if available
-    if (state.botColor && state.botColor !== botColor) {
-        botColor = state.botColor;
-        updateBoardOrientation(botColor);
+  console.log('Game state update received:', state);
+  
+  // Update bot color if available
+  if (state.botColor && state.botColor !== botColor) {
+    botColor = state.botColor;
+    updateBoardOrientation(botColor);
+  }
+  
+  if (state.fen) {
+    try {
+      // Load the new position
+      game = new Chess(state.fen);
+      board.position(state.fen, false); // false = don't animate for smoother updates
+      
+      // Update current turn
+      const turn = state.turn === 'w' ? 'White' : 'Black';
+      currentTurn.textContent = turn;
+      
+      // Update game status
+      if (state.inProgress) {
+        updateGameStatus('active', 'Game in progress');
+        updateGameStatusMessage(`Game in progress. ${botColor === state.turn ? 'Your turn to vote!' : 'Waiting for opponent move...'}`);
+      }
+      
+      // Create map of legal moves if provided
+      if (state.legalMoves) {
+        createLegalMovesMap(state.legalMoves);
+      }
+    } catch (e) {
+      console.error('Error updating game state:', e);
+      showNotification('Error updating game state', true);
     }
-    
-    updateGameState(state);
+  }
+  
+  // Update voting timer
+  if (state.votingEndTime) {
+    votingEndTime = state.votingEndTime;
+    isVotingPeriod = true;
+    updateTimer();
+  } else {
+    clearInterval(timerInterval);
+    isVotingPeriod = false;
+  }
+  
+  // Update game status
+  if (state.isGameOver) {
+    updateGameStatus('ended', 'Game over');
+    updateGameStatusMessage('Game over. The match has ended.');
+    clearInterval(timerInterval);
+    isVotingPeriod = false;
+  } else if (state.isCheck) {
+    if (state.isCheckmate) {
+      updateGameStatus('ended', 'Checkmate');
+      updateGameStatusMessage('Checkmate! Game over.');
+      isVotingPeriod = false;
+    } else {
+      updateGameStatusMessage('Check!');
+    }
+  }
 });
 
 // Voting period start
