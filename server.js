@@ -43,6 +43,8 @@ let gameInProgress = false;
 let votingTimeoutId = null;
 let lastEventTime = Date.now();
 let streamReconnectAttempts = 0;
+let botColor = null; // 'white' or 'black'
+let colorDetermined = false;
 
 // Debug endpoint
 app.get('/debug', (req, res) => {
@@ -50,6 +52,8 @@ app.get('/debug', (req, res) => {
     gameInProgress,
     currentGameId,
     currentFen,
+    botColor,
+    colorDetermined,
     legalMoves: legalMoves.length,
     votes: Object.keys(votes).length,
     lastEventTime,
@@ -67,10 +71,13 @@ async function connectToLichessGame(gameId) {
     votes = {};
     voterIPs = {};
     
-    // Stream game state from Lichess
+    // Use the correct API endpoint for bot accounts
+    const streamUrl = `${LICHESS_API_BASE}/bot/game/stream/${gameId}`;
+    console.log(`Connecting to: ${streamUrl}`);
+    
     const response = await axios({
       method: 'get',
-      url: `${LICHESS_API_BASE}/board/game/stream/${gameId}`,
+      url: streamUrl,
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`
       },
@@ -121,6 +128,10 @@ async function connectToLichessGame(gameId) {
     });
 
     console.log(`Connected to Lichess game: ${gameId}`);
+    
+    // Determine bot color immediately
+    determinePlayerColors(gameId);
+    
     return true;
   } catch (error) {
     console.error('Error connecting to Lichess game:', error.message);
@@ -135,6 +146,83 @@ async function connectToLichessGame(gameId) {
   }
 }
 
+// Determine which color the bot is playing
+async function determinePlayerColors(gameId) {
+  try {
+    const response = await axios({
+      method: 'get',
+      url: `${LICHESS_API_BASE}/bot/game/stream/${gameId}`,
+      headers: {
+        'Authorization': `Bearer ${LICHESS_API_TOKEN}`
+      },
+      responseType: 'json'
+    });
+
+    if (response.data) {
+      const gameData = response.data;
+      
+      if (gameData.white && gameData.white.id === BOT_ACCOUNT.toLowerCase()) {
+        botColor = 'white';
+        colorDetermined = true;
+        console.log('Bot is playing as white');
+      } else if (gameData.black && gameData.black.id === BOT_ACCOUNT.toLowerCase()) {
+        botColor = 'black';
+        colorDetermined = true;
+        console.log('Bot is playing as black');
+      } else {
+        console.log('Could not determine bot color from game data:', gameData);
+        
+        // Fallback method - check account's ongoing games
+        const accountResponse = await axios({
+          method: 'get',
+          url: `${LICHESS_API_BASE}/account/playing`,
+          headers: {
+            'Authorization': `Bearer ${LICHESS_API_TOKEN}`
+          }
+        });
+        
+        if (accountResponse.data && accountResponse.data.nowPlaying) {
+          const game = accountResponse.data.nowPlaying.find(g => g.gameId === gameId);
+          if (game) {
+            botColor = game.color;
+            colorDetermined = true;
+            console.log(`Bot is playing as ${botColor} (determined from account data)`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error determining player colors:', error.message);
+    
+    // Fallback - attempt to infer from game state
+    // This isn't ideal but better than nothing
+    if (currentChess && currentChess.turn() === 'w') {
+      // If it's white's turn and we need to vote, we're playing as white
+      if (isVotingNeeded()) {
+        botColor = 'white';
+        colorDetermined = true;
+        console.log('Bot is playing as white (inferred from game state)');
+      }
+    } else if (currentChess && currentChess.turn() === 'b') {
+      // If it's black's turn and we need to vote, we're playing as black
+      if (isVotingNeeded()) {
+        botColor = 'black';
+        colorDetermined = true;
+        console.log('Bot is playing as black (inferred from game state)');
+      }
+    }
+  }
+  
+  // Broadcast the updated game state with the bot color
+  broadcastGameState();
+}
+
+// Check if voting is needed based on whose turn it is
+function isVotingNeeded() {
+  return (botColor === 'white' && currentChess.turn() === 'w') || 
+         (botColor === 'black' && currentChess.turn() === 'b');
+}
+
 // Process game updates from Lichess
 function handleGameUpdate(data) {
   console.log('Received game update type:', data.type);
@@ -143,6 +231,17 @@ function handleGameUpdate(data) {
   if (data.type === 'gameFull') {
     // Full game data received
     console.log('Game full data:', JSON.stringify(data).substring(0, 500) + '...');
+    
+    // Determine bot color from the full game data
+    if (data.white && data.white.id && data.white.id.toLowerCase() === BOT_ACCOUNT.toLowerCase()) {
+      botColor = 'white';
+      colorDetermined = true;
+      console.log('Bot is playing as white');
+    } else if (data.black && data.black.id && data.black.id.toLowerCase() === BOT_ACCOUNT.toLowerCase()) {
+      botColor = 'black';
+      colorDetermined = true;
+      console.log('Bot is playing as black');
+    }
     
     // Set the initial position
     currentFen = data.initialFen === 'startpos' ? 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' : data.initialFen;
@@ -156,15 +255,7 @@ function handleGameUpdate(data) {
     updateLegalMoves();
     
     // Start voting if it's our turn
-    const isOurTurn = (data.white && data.white.id && data.white.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'w') || 
-                     (data.black && data.black.id && data.black.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'b');
-    
-    console.log('Is our turn:', isOurTurn, 'Current turn:', currentChess.turn());
-    console.log('Bot account:', BOT_ACCOUNT);
-    console.log('White player:', data.white ? data.white.id : 'unknown');
-    console.log('Black player:', data.black ? data.black.id : 'unknown');
-    
-    if (isOurTurn) {
+    if (isVotingNeeded()) {
       // Clear any existing timeout
       if (votingTimeoutId) {
         clearTimeout(votingTimeoutId);
@@ -183,8 +274,7 @@ function handleGameUpdate(data) {
       applyMoves(data.moves);
       
       // Check if it's our turn now
-      if ((currentChess.turn() === 'w' && isPlayerBot('white')) || 
-          (currentChess.turn() === 'b' && isPlayerBot('black'))) {
+      if (isVotingNeeded()) {
         // Clear any existing timeout
         if (votingTimeoutId) {
           clearTimeout(votingTimeoutId);
@@ -204,17 +294,6 @@ function handleGameUpdate(data) {
     // Chat message received - could be used for announcements
     console.log('Chat message:', data);
     io.emit('chatMessage', data);
-  }
-}
-
-// Check if a player is the bot
-function isPlayerBot(color) {
-  // This function should be improved with real game data
-  // For now, we'll use a placeholder implementation
-  if (color === 'white') {
-    return true; // Assume bot is white for testing
-  } else {
-    return false; // Assume bot is not black for testing
   }
 }
 
@@ -283,7 +362,8 @@ function startVotingPeriod() {
   // Broadcast voting started
   io.emit('votingStarted', {
     endTime: votingEndTime,
-    legalMoves: legalMoves
+    legalMoves: legalMoves,
+    botColor: botColor
   });
   
   console.log('Voting period started, ends at:', new Date(votingEndTime).toISOString());
@@ -352,9 +432,10 @@ async function makeMove(move) {
   try {
     console.log(`Attempting to make move ${move} on game ${currentGameId}`);
     
+    // Use the bot API endpoint for making moves
     const response = await axios({
       method: 'post',
-      url: `${LICHESS_API_BASE}/board/game/${currentGameId}/move/${move}`,
+      url: `${LICHESS_API_BASE}/bot/game/${currentGameId}/move/${move}`,
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`,
         'Content-Type': 'application/json'
@@ -386,10 +467,11 @@ function broadcastGameState() {
     isGameOver: currentChess.isGameOver(),
     isCheck: currentChess.isCheck(),
     isCheckmate: currentChess.isCheckmate(),
-    inProgress: gameInProgress
+    inProgress: gameInProgress,
+    botColor: botColor
   };
   
-  console.log('Broadcasting game state - FEN:', currentFen, 'Turn:', currentChess.turn());
+  console.log('Broadcasting game state - FEN:', currentFen, 'Turn:', currentChess.turn(), 'Bot color:', botColor);
   io.emit('gameState', payload);
 }
 
@@ -528,33 +610,6 @@ async function acceptChallenge(challengeId) {
   }
 }
 
-// Check if the bot is white or black in the current game
-async function checkPlayerColor() {
-  if (!currentGameId) return null;
-  
-  try {
-    const response = await axios({
-      method: 'get',
-      url: `${LICHESS_API_BASE}/account/playing`,
-      headers: {
-        'Authorization': `Bearer ${LICHESS_API_TOKEN}`
-      }
-    });
-    
-    if (response.data && response.data.nowPlaying) {
-      const currentGame = response.data.nowPlaying.find(game => game.gameId === currentGameId);
-      if (currentGame) {
-        return currentGame.color; // 'white' or 'black'
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Error checking player color:', error.message);
-    return null;
-  }
-}
-
 // Health check - reconnect if needed
 function healthCheck() {
   const now = Date.now();
@@ -592,14 +647,16 @@ io.on('connection', (socket) => {
       isGameOver: currentChess.isGameOver(),
       isCheck: currentChess.isCheck(),
       isCheckmate: currentChess.isCheckmate(),
-      inProgress: gameInProgress
+      inProgress: gameInProgress,
+      botColor: botColor
     });
     
     // If voting is in progress, inform the client
     if (votingEndTime) {
       socket.emit('votingStarted', {
         endTime: votingEndTime,
-        legalMoves: legalMoves
+        legalMoves: legalMoves,
+        botColor: botColor
       });
     }
   } else {
@@ -659,7 +716,8 @@ io.on('connection', (socket) => {
         inProgress: gameInProgress,
         gameId: currentGameId,
         fen: currentFen,
-        turn: currentChess.turn()
+        turn: currentChess.turn(),
+        botColor: botColor
       });
     } else {
       socket.emit('noActiveGame');
