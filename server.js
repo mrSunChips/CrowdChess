@@ -32,19 +32,37 @@ const BOT_ACCOUNT = 'thatsjustchipschat';
 
 // Game and voting state
 let currentGameId = null;
-let currentFen = null;
-let currentChess = new Chess(); // Initialize chess.js
+let currentFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+let currentChess = new Chess();
 let legalMoves = [];
 let votes = {};
 let voterIPs = {}; // Track IPs that have voted
 let votingEndTime = null;
 const VOTING_DURATION = 90000; // 1 minute 30 seconds in milliseconds
 let gameInProgress = false;
+let votingTimeoutId = null;
+let lastEventTime = Date.now();
+let streamReconnectAttempts = 0;
+
+// Debug endpoint
+app.get('/debug', (req, res) => {
+  res.json({
+    gameInProgress,
+    currentGameId,
+    currentFen,
+    legalMoves: legalMoves.length,
+    votes: Object.keys(votes).length,
+    lastEventTime,
+    streamReconnectAttempts
+  });
+});
 
 // Connect to a Lichess game
 async function connectToLichessGame(gameId) {
   try {
     console.log(`Attempting to connect to game: ${gameId}`);
+    
+    // Reset game state
     currentGameId = gameId;
     votes = {};
     voterIPs = {};
@@ -56,47 +74,79 @@ async function connectToLichessGame(gameId) {
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`
       },
-      responseType: 'stream'
+      responseType: 'stream',
+      timeout: 30000 // Add timeout to prevent hanging connections
     });
 
     gameInProgress = true;
+    io.emit('gameConnected', { gameId });
 
+    // Handle data streaming
     response.data.on('data', (chunk) => {
+      lastEventTime = Date.now();
       const lines = chunk.toString().split('\n').filter(line => line.trim());
       
       for (const line of lines) {
         try {
-          const data = JSON.parse(line);
-          handleGameUpdate(data);
+          console.log('Raw game data:', line);
+          if (line.trim()) {
+            const data = JSON.parse(line);
+            handleGameUpdate(data);
+          }
         } catch (e) {
-          console.error('Error parsing game data:', e);
+          console.error('Error parsing game data:', e, 'Line:', line);
         }
       }
     });
 
+    // Handle stream end
     response.data.on('end', () => {
       console.log(`Game stream ended for game: ${gameId}`);
       gameInProgress = false;
       io.emit('gameEnded', { gameId });
     });
 
+    // Handle stream errors
+    response.data.on('error', (error) => {
+      console.error(`Game stream error for game ${gameId}:`, error.message);
+      gameInProgress = false;
+      io.emit('gameError', { error: error.message });
+      
+      // Try to reconnect after a delay
+      setTimeout(() => {
+        if (currentGameId === gameId) {
+          connectToLichessGame(gameId);
+        }
+      }, 5000);
+    });
+
     console.log(`Connected to Lichess game: ${gameId}`);
     return true;
   } catch (error) {
     console.error('Error connecting to Lichess game:', error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    }
+    
+    gameInProgress = false;
+    io.emit('gameError', { error: error.message });
     return false;
   }
 }
 
 // Process game updates from Lichess
 function handleGameUpdate(data) {
-  console.log('Received game update:', JSON.stringify(data).substring(0, 200) + '...');
+  console.log('Received game update type:', data.type);
   
   // Handle different types of game state data
   if (data.type === 'gameFull') {
     // Full game data received
+    console.log('Game full data:', JSON.stringify(data).substring(0, 500) + '...');
+    
+    // Set the initial position
     currentFen = data.initialFen === 'startpos' ? 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' : data.initialFen;
-    currentChess.load(currentFen);
+    currentChess = new Chess(currentFen);
     
     // Apply moves if any
     if (data.state && data.state.moves) {
@@ -106,30 +156,41 @@ function handleGameUpdate(data) {
     updateLegalMoves();
     
     // Start voting if it's our turn
-    const isOurTurn = (data.white.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'w') || 
-                      (data.black.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'b');
+    const isOurTurn = (data.white && data.white.id && data.white.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'w') || 
+                     (data.black && data.black.id && data.black.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'b');
     
-    if (isOurTurn && !votingEndTime) {
+    console.log('Is our turn:', isOurTurn, 'Current turn:', currentChess.turn());
+    console.log('Bot account:', BOT_ACCOUNT);
+    console.log('White player:', data.white ? data.white.id : 'unknown');
+    console.log('Black player:', data.black ? data.black.id : 'unknown');
+    
+    if (isOurTurn) {
+      // Clear any existing timeout
+      if (votingTimeoutId) {
+        clearTimeout(votingTimeoutId);
+      }
       startVotingPeriod();
     }
     
     broadcastGameState();
   } else if (data.type === 'gameState') {
     // Game state update received
+    console.log('Game state update:', JSON.stringify(data).substring(0, 500) + '...');
+    
     if (data.moves) {
       // Reset the chess instance and replay all moves
       currentChess = new Chess();
       applyMoves(data.moves);
       
-      // Check if it's our turn
-      const lastMove = data.moves.trim().split(' ').pop();
-      console.log('Last move:', lastMove, 'Current turn:', currentChess.turn());
-      
-      // If a move was just made and it's our turn now, start voting
-      if (lastMove && ((currentChess.turn() === 'w' && data.wdraw === false) || (currentChess.turn() === 'b' && data.bdraw === false))) {
-        // Clear existing voting if in progress
-        clearTimeout(votingTimeoutId);
+      // Check if it's our turn now
+      if ((currentChess.turn() === 'w' && isPlayerBot('white')) || 
+          (currentChess.turn() === 'b' && isPlayerBot('black'))) {
+        // Clear any existing timeout
+        if (votingTimeoutId) {
+          clearTimeout(votingTimeoutId);
+        }
         
+        console.log('Starting new voting period after moves update');
         // Start new voting period
         votes = {};
         voterIPs = {};
@@ -139,12 +200,30 @@ function handleGameUpdate(data) {
     }
     
     broadcastGameState();
+  } else if (data.type === 'chatLine') {
+    // Chat message received - could be used for announcements
+    console.log('Chat message:', data);
+    io.emit('chatMessage', data);
+  }
+}
+
+// Check if a player is the bot
+function isPlayerBot(color) {
+  // This function should be improved with real game data
+  // For now, we'll use a placeholder implementation
+  if (color === 'white') {
+    return true; // Assume bot is white for testing
+  } else {
+    return false; // Assume bot is not black for testing
   }
 }
 
 // Apply a series of moves to the chess instance
 function applyMoves(movesString) {
   const moves = movesString.trim().split(' ').filter(m => m);
+  console.log('Applying moves:', moves);
+  
+  // Reset the chess instance to the starting position
   currentChess = new Chess();
   
   for (const move of moves) {
@@ -154,7 +233,10 @@ function applyMoves(movesString) {
       const to = move.substring(2, 4);
       const promotion = move.length > 4 ? move.substring(4, 5) : undefined;
       
-      currentChess.move({ from, to, promotion });
+      const moveResult = currentChess.move({ from, to, promotion });
+      if (!moveResult) {
+        console.error('Invalid move:', move);
+      }
     } catch (e) {
       console.error('Error applying move:', move, e.message);
     }
@@ -162,26 +244,29 @@ function applyMoves(movesString) {
   
   // Update FEN
   currentFen = currentChess.fen();
+  console.log('Updated FEN:', currentFen);
   updateLegalMoves();
 }
 
 // Update legal moves based on current position
 function updateLegalMoves() {
-  const moves = currentChess.moves({ verbose: true });
-  legalMoves = moves.map(move => {
-    // Convert chess.js move format to UCI format
-    let uci = move.from + move.to;
-    if (move.promotion) {
-      uci += move.promotion;
-    }
-    return uci;
-  });
-  
-  console.log('Legal moves updated:', legalMoves);
+  try {
+    const moves = currentChess.moves({ verbose: true });
+    legalMoves = moves.map(move => {
+      // Convert chess.js move format to UCI format
+      let uci = move.from + move.to;
+      if (move.promotion) {
+        uci += move.promotion;
+      }
+      return { uci, move };
+    });
+    
+    console.log('Legal moves updated, count:', legalMoves.length);
+  } catch (e) {
+    console.error('Error updating legal moves:', e.message);
+    legalMoves = [];
+  }
 }
-
-// Variable to store the voting timeout ID
-let votingTimeoutId;
 
 // Start voting period timer
 function startVotingPeriod() {
@@ -228,6 +313,7 @@ async function countVotesAndMove() {
   if (topMoves.length > 0 && maxVotes > 0) {
     // Randomly select one of the top moves to break ties
     const winningMove = topMoves[Math.floor(Math.random() * topMoves.length)];
+    io.emit('moveSelected', { move: winningMove, votes: votes[winningMove] });
     
     try {
       await makeMove(winningMove);
@@ -238,9 +324,26 @@ async function countVotesAndMove() {
       startVotingPeriod();
     }
   } else {
-    console.log('No valid votes received, restarting voting period');
-    // No votes or winning move not legal, restart voting
-    startVotingPeriod();
+    console.log('No valid votes received or no legal moves');
+    
+    // If there are legal moves but no votes, just pick a random legal move
+    if (legalMoves.length > 0) {
+      const randomMove = legalMoves[Math.floor(Math.random() * legalMoves.length)].uci;
+      console.log('Selecting random move:', randomMove);
+      io.emit('moveSelected', { move: randomMove, votes: 0, random: true });
+      
+      try {
+        await makeMove(randomMove);
+      } catch (error) {
+        console.error('Error making random move:', error);
+        startVotingPeriod();
+      }
+    } else {
+      // No legal moves, game is probably over
+      console.log('No legal moves available, game may be over');
+      gameInProgress = false;
+      io.emit('gameEnded', { gameId: currentGameId, reason: 'No legal moves' });
+    }
   }
 }
 
@@ -255,7 +358,8 @@ async function makeMove(move) {
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`,
         'Content-Type': 'application/json'
-      }
+      },
+      timeout: 10000 // Add timeout to prevent hanging requests
     });
     
     console.log(`Move ${move} executed successfully:`, response.data);
@@ -272,7 +376,7 @@ async function makeMove(move) {
 
 // Broadcast current game state to all clients
 function broadcastGameState() {
-  io.emit('gameState', {
+  const payload = {
     gameId: currentGameId,
     fen: currentFen,
     turn: currentChess.turn(),
@@ -281,51 +385,19 @@ function broadcastGameState() {
     votingEndTime: votingEndTime,
     isGameOver: currentChess.isGameOver(),
     isCheck: currentChess.isCheck(),
-    isCheckmate: currentChess.isCheckmate()
-  });
-}
-
-// Challenge thatsjustchips
-async function challengeThatsjustchips() {
-  try {
-    console.log(`Creating challenge to ${ALLOWED_CHALLENGER}`);
-    
-    const response = await axios({
-      method: 'post',
-      url: `${LICHESS_API_BASE}/challenge/${ALLOWED_CHALLENGER}`,
-      headers: {
-        'Authorization': `Bearer ${LICHESS_API_TOKEN}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      data: 'clock.limit=900&clock.increment=10&color=random'
-    });
-    
-    console.log('Challenge created:', response.data);
-    
-    if (response.data && response.data.challenge && response.data.challenge.id) {
-      // Return the challenge details
-      return { 
-        success: true, 
-        challengeId: response.data.challenge.id,
-        url: response.data.challenge.url
-      };
-    } else {
-      return { success: false, message: 'Failed to create challenge' };
-    }
-  } catch (error) {
-    console.error('Error creating challenge:', error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    }
-    return { success: false, message: error.message };
-  }
+    isCheckmate: currentChess.isCheckmate(),
+    inProgress: gameInProgress
+  };
+  
+  console.log('Broadcasting game state - FEN:', currentFen, 'Turn:', currentChess.turn());
+  io.emit('gameState', payload);
 }
 
 // Listen for incoming events from Lichess
 async function streamEvents() {
   try {
     console.log('Starting to stream events from Lichess');
+    streamReconnectAttempts++;
     
     const response = await axios({
       method: 'get',
@@ -333,42 +405,80 @@ async function streamEvents() {
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`
       },
-      responseType: 'stream'
+      responseType: 'stream',
+      timeout: 30000 // Add timeout to prevent hanging connections
     });
 
+    // Reset reconnect attempts on successful connection
+    streamReconnectAttempts = 0;
+
     response.data.on('data', (chunk) => {
+      lastEventTime = Date.now();
       const lines = chunk.toString().split('\n').filter(line => line.trim());
       
       for (const line of lines) {
         try {
-          const event = JSON.parse(line);
-          handleLichessEvent(event);
+          if (line.trim()) {
+            console.log('Raw event data:', line);
+            const event = JSON.parse(line);
+            handleLichessEvent(event);
+          }
         } catch (e) {
-          console.error('Error parsing event data:', e);
+          console.error('Error parsing event data:', e, 'Line:', line);
         }
       }
+    });
+
+    response.data.on('end', () => {
+      console.log('Event stream ended');
+      // Try to reconnect after a delay
+      setTimeout(streamEvents, 5000);
+    });
+
+    response.data.on('error', (error) => {
+      console.error('Event stream error:', error.message);
+      // Try to reconnect after a delay
+      setTimeout(streamEvents, 5000);
     });
 
     console.log('Event stream connected');
   } catch (error) {
     console.error('Error connecting to event stream:', error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    }
+    
+    // Exponential backoff for reconnect attempts
+    const delay = Math.min(30000, 1000 * Math.pow(2, streamReconnectAttempts));
+    console.log(`Retrying in ${delay}ms (attempt ${streamReconnectAttempts})`);
+    
     // Try to reconnect after a delay
-    setTimeout(streamEvents, 10000);
+    setTimeout(streamEvents, delay);
   }
 }
 
 // Handle events from Lichess
 function handleLichessEvent(event) {
-  console.log('Received Lichess event:', JSON.stringify(event).substring(0, 200) + '...');
+  console.log('Received Lichess event type:', event.type);
   
   if (event.type === 'gameStart') {
     // A game has started, connect to it
+    console.log('Game started:', event.game.id);
     connectToLichessGame(event.game.id);
   } else if (event.type === 'gameFinish') {
     // A game has finished
     console.log(`Game ${event.game.id} has finished`);
-    gameInProgress = false;
-    io.emit('gameEnded', { gameId: event.game.id });
+    
+    if (currentGameId === event.game.id) {
+      gameInProgress = false;
+      // Clear any voting timeout
+      if (votingTimeoutId) {
+        clearTimeout(votingTimeoutId);
+        votingTimeoutId = null;
+      }
+      io.emit('gameEnded', { gameId: event.game.id });
+    }
   } else if (event.type === 'challenge') {
     // Someone challenged us
     console.log(`Challenge ${event.challenge.id} received from ${event.challenge.challenger.name}`);
@@ -400,7 +510,8 @@ async function acceptChallenge(challengeId) {
       url: `${LICHESS_API_BASE}/challenge/${challengeId}/accept`,
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`
-      }
+      },
+      timeout: 10000 // Add timeout to prevent hanging requests
     });
     
     console.log('Challenge accepted:', response.data);
@@ -412,7 +523,52 @@ async function acceptChallenge(challengeId) {
       console.error('Response status:', error.response.status);
       console.error('Response data:', error.response.data);
     }
+    io.emit('challengeError', { error: error.message });
     return { success: false, message: error.message };
+  }
+}
+
+// Check if the bot is white or black in the current game
+async function checkPlayerColor() {
+  if (!currentGameId) return null;
+  
+  try {
+    const response = await axios({
+      method: 'get',
+      url: `${LICHESS_API_BASE}/account/playing`,
+      headers: {
+        'Authorization': `Bearer ${LICHESS_API_TOKEN}`
+      }
+    });
+    
+    if (response.data && response.data.nowPlaying) {
+      const currentGame = response.data.nowPlaying.find(game => game.gameId === currentGameId);
+      if (currentGame) {
+        return currentGame.color; // 'white' or 'black'
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error checking player color:', error.message);
+    return null;
+  }
+}
+
+// Health check - reconnect if needed
+function healthCheck() {
+  const now = Date.now();
+  
+  // If no events for 5 minutes, try to reconnect to the event stream
+  if (now - lastEventTime > 5 * 60 * 1000) {
+    console.log('No events received for 5 minutes, reconnecting...');
+    streamEvents();
+  }
+  
+  // If game in progress but no events for 2 minutes, try to reconnect to the game
+  if (gameInProgress && currentGameId && now - lastEventTime > 2 * 60 * 1000) {
+    console.log('No game events received for 2 minutes, reconnecting to game...');
+    connectToLichessGame(currentGameId);
   }
 }
 
@@ -425,7 +581,7 @@ io.on('connection', (socket) => {
   socket.clientIP = clientIP;
   
   // Send current game state to new client
-  if (currentGameId && currentFen) {
+  if (gameInProgress && currentGameId && currentFen) {
     socket.emit('gameState', {
       gameId: currentGameId,
       fen: currentFen,
@@ -435,25 +591,52 @@ io.on('connection', (socket) => {
       votingEndTime: votingEndTime,
       isGameOver: currentChess.isGameOver(),
       isCheck: currentChess.isCheck(),
-      isCheckmate: currentChess.isCheckmate()
+      isCheckmate: currentChess.isCheckmate(),
+      inProgress: gameInProgress
     });
+    
+    // If voting is in progress, inform the client
+    if (votingEndTime) {
+      socket.emit('votingStarted', {
+        endTime: votingEndTime,
+        legalMoves: legalMoves
+      });
+    }
+  } else {
+    socket.emit('noActiveGame');
   }
   
   // Handle vote submission
   socket.on('submitVote', (move) => {
+    console.log('Vote received:', move, 'from IP:', socket.clientIP);
+    
     if (!votingEndTime || Date.now() >= votingEndTime) {
       socket.emit('voteRejected', { reason: 'Voting period has ended' });
       return;
     }
     
-    if (!legalMoves.includes(move)) {
+    // Validate that the move is legal
+    const isLegal = legalMoves.some(m => m.uci === move);
+    if (!isLegal) {
       socket.emit('voteRejected', { reason: 'Invalid move' });
       return;
     }
     
+    // Check if this IP has already voted
     if (voterIPs[socket.clientIP]) {
-      socket.emit('voteRejected', { reason: 'You have already voted for this move' });
-      return;
+      // Allow changing vote
+      const oldMove = voterIPs[socket.clientIP];
+      if (oldMove !== move) {
+        // Remove old vote
+        votes[oldMove]--;
+        if (votes[oldMove] <= 0) {
+          delete votes[oldMove];
+        }
+      } else {
+        // Same vote again, reject
+        socket.emit('voteRejected', { reason: 'You have already voted for this move' });
+        return;
+      }
     }
     
     // Record vote and IP
@@ -469,36 +652,31 @@ io.on('connection', (socket) => {
     console.log(`Vote for ${move} from IP ${socket.clientIP}, current count: ${votes[move]}`);
   });
   
-  // Handle challenge to thatsjustchips
-  socket.on('challengeThatsjustchips', async () => {
-    const result = await challengeThatsjustchips();
-    socket.emit('challengeResult', result);
-    // Broadcast to all clients
-    if (result.success) {
-      io.emit('challengeCreated', result);
-    }
-  });
-  
   // Handle game status request
   socket.on('getGameStatus', () => {
-    socket.emit('gameStatus', {
-      inProgress: gameInProgress,
-      gameId: currentGameId,
-      fen: currentFen
-    });
+    if (gameInProgress && currentGameId) {
+      socket.emit('gameStatus', {
+        inProgress: gameInProgress,
+        gameId: currentGameId,
+        fen: currentFen,
+        turn: currentChess.turn()
+      });
+    } else {
+      socket.emit('noActiveGame');
+    }
   });
   
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
-    
-    // If the client had voted, we could optionally remove their vote
-    // However, for this application we'll let votes persist
   });
 });
 
 // Start streaming events from Lichess
 streamEvents();
+
+// Start health check interval
+setInterval(healthCheck, 60000); // Check every minute
 
 // Start the server
 const PORT = process.env.PORT || 3000;
