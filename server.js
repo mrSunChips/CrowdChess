@@ -26,6 +26,10 @@ const io = new Server(server, {
 const LICHESS_API_TOKEN = process.env.LICHESS_API_TOKEN;
 const LICHESS_API_BASE = 'https://lichess.org/api';
 
+// Specific account to auto-accept challenges from
+const ALLOWED_CHALLENGER = 'thatsjustchips';
+const BOT_ACCOUNT = 'thatsjustchipschat';
+
 // Game and voting state
 let currentGameId = null;
 let currentFen = null;
@@ -36,7 +40,6 @@ let voterIPs = {}; // Track IPs that have voted
 let votingEndTime = null;
 const VOTING_DURATION = 90000; // 1 minute 30 seconds in milliseconds
 let gameInProgress = false;
-let challengeCreatedTime = null;
 
 // Connect to a Lichess game
 async function connectToLichessGame(gameId) {
@@ -103,8 +106,8 @@ function handleGameUpdate(data) {
     updateLegalMoves();
     
     // Start voting if it's our turn
-    const isOurTurn = (data.white.id.toLowerCase() === 'mrsunchips' && currentChess.turn() === 'w') || 
-                      (data.black.id.toLowerCase() === 'mrsunchips' && currentChess.turn() === 'b');
+    const isOurTurn = (data.white.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'w') || 
+                      (data.black.id.toLowerCase() === BOT_ACCOUNT.toLowerCase() && currentChess.turn() === 'b');
     
     if (isOurTurn && !votingEndTime) {
       startVotingPeriod();
@@ -282,77 +285,25 @@ function broadcastGameState() {
   });
 }
 
-// Create a challenge to Lichess AI
-async function createAIChallenge(level = 1) {
+// Challenge thatsjustchips
+async function challengeThatsjustchips() {
   try {
-    // Prevent creating multiple challenges in quick succession
-    const now = Date.now();
-    if (challengeCreatedTime && now - challengeCreatedTime < 10000) {
-      console.log('Challenge creation rate limited');
-      return { success: false, message: 'Please wait before creating another challenge' };
-    }
-
-    challengeCreatedTime = now;
-    
-    console.log(`Creating challenge to Lichess AI level ${level}`);
+    console.log(`Creating challenge to ${ALLOWED_CHALLENGER}`);
     
     const response = await axios({
       method: 'post',
-      url: `${LICHESS_API_BASE}/challenge/ai`,
+      url: `${LICHESS_API_BASE}/challenge/${ALLOWED_CHALLENGER}`,
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`,
         'Content-Type': 'application/x-www-form-urlencoded'
       },
-      data: `level=${level}&clock.limit=900&clock.increment=10`
+      data: 'clock.limit=900&clock.increment=10&color=random'
     });
     
     console.log('Challenge created:', response.data);
     
-    if (response.data && response.data.game && response.data.game.id) {
-      // Connect to the new game
-      await connectToLichessGame(response.data.game.id);
-      return { success: true, gameId: response.data.game.id };
-    } else {
-      return { success: false, message: 'Failed to create game' };
-    }
-  } catch (error) {
-    console.error('Error creating AI challenge:', error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    }
-    return { success: false, message: error.message };
-  }
-}
-
-// Create an open challenge for anyone to accept
-async function createOpenChallenge() {
-  try {
-    // Prevent creating multiple challenges in quick succession
-    const now = Date.now();
-    if (challengeCreatedTime && now - challengeCreatedTime < 10000) {
-      console.log('Challenge creation rate limited');
-      return { success: false, message: 'Please wait before creating another challenge' };
-    }
-
-    challengeCreatedTime = now;
-    
-    console.log('Creating open challenge');
-    
-    const response = await axios({
-      method: 'post',
-      url: `${LICHESS_API_BASE}/challenge/open`,
-      headers: {
-        'Authorization': `Bearer ${LICHESS_API_TOKEN}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      data: 'clock.limit=900&clock.increment=10'
-    });
-    
-    console.log('Open challenge created:', response.data);
-    
     if (response.data && response.data.challenge && response.data.challenge.id) {
-      // Return the challenge URL
+      // Return the challenge details
       return { 
         success: true, 
         challengeId: response.data.challenge.id,
@@ -362,7 +313,7 @@ async function createOpenChallenge() {
       return { success: false, message: 'Failed to create challenge' };
     }
   } catch (error) {
-    console.error('Error creating open challenge:', error.message);
+    console.error('Error creating challenge:', error.message);
     if (error.response) {
       console.error('Response status:', error.response.status);
       console.error('Response data:', error.response.data);
@@ -419,9 +370,15 @@ function handleLichessEvent(event) {
     gameInProgress = false;
     io.emit('gameEnded', { gameId: event.game.id });
   } else if (event.type === 'challenge') {
-    // Someone challenged us or we created a challenge
-    console.log(`Challenge ${event.challenge.id} received/created`);
+    // Someone challenged us
+    console.log(`Challenge ${event.challenge.id} received from ${event.challenge.challenger.name}`);
     io.emit('challengeReceived', event.challenge);
+    
+    // Auto-accept if it's from the allowed challenger
+    if (event.challenge.challenger.name.toLowerCase() === ALLOWED_CHALLENGER.toLowerCase()) {
+      console.log(`Auto-accepting challenge from ${ALLOWED_CHALLENGER}`);
+      acceptChallenge(event.challenge.id);
+    }
   } else if (event.type === 'challengeCanceled') {
     // A challenge was canceled
     console.log(`Challenge ${event.challenge.id} canceled`);
@@ -447,9 +404,14 @@ async function acceptChallenge(challengeId) {
     });
     
     console.log('Challenge accepted:', response.data);
+    io.emit('challengeAccepted', { challengeId });
     return { success: true };
   } catch (error) {
     console.error('Error accepting challenge:', error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    }
     return { success: false, message: error.message };
   }
 }
@@ -507,32 +469,14 @@ io.on('connection', (socket) => {
     console.log(`Vote for ${move} from IP ${socket.clientIP}, current count: ${votes[move]}`);
   });
   
-  // Handle game connection request
-  socket.on('connectToGame', async (gameId) => {
-    const success = await connectToLichessGame(gameId);
-    socket.emit('gameConnectionResult', { success, gameId });
-  });
-  
-  // Handle AI challenge request
-  socket.on('createAIChallenge', async (level) => {
-    const result = await createAIChallenge(parseInt(level) || 1);
+  // Handle challenge to thatsjustchips
+  socket.on('challengeThatsjustchips', async () => {
+    const result = await challengeThatsjustchips();
     socket.emit('challengeResult', result);
-  });
-  
-  // Handle open challenge request
-  socket.on('createOpenChallenge', async () => {
-    const result = await createOpenChallenge();
-    socket.emit('openChallengeResult', result);
     // Broadcast to all clients
     if (result.success) {
-      io.emit('openChallengeCreated', result);
+      io.emit('challengeCreated', result);
     }
-  });
-  
-  // Handle challenge acceptance
-  socket.on('acceptChallenge', async (challengeId) => {
-    const result = await acceptChallenge(challengeId);
-    socket.emit('acceptChallengeResult', result);
   });
   
   // Handle game status request
