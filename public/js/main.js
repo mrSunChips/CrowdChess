@@ -1,5 +1,11 @@
 // Initialize socket.io connection
-const socket = io();
+const socket = io({
+  reconnection: true,
+  reconnectionAttempts: 10,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 20000
+});
 
 // Chess board configuration and game state
 let board = null;
@@ -14,6 +20,8 @@ let boardOrientation = 'white';
 let isVotingPeriod = false;
 let legalMovesMap = {};
 let botColor = null;
+let connectionAttempts = 0;
+let lastGameState = null;
 
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
@@ -26,6 +34,12 @@ const voteListContainer = document.getElementById('vote-list');
 const voteButton = document.getElementById('vote-button');
 const gameStatusMessage = document.getElementById('game-status-message');
 
+// Setup debug logging
+function debugLog(message, data) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${message}`, data);
+}
+
 // Initialize the chess board
 function initializeBoard() {
     // Board configuration
@@ -36,14 +50,21 @@ function initializeBoard() {
         orientation: boardOrientation
     };
     
-    // Initialize the chess board
-    board = Chessboard('board', config);
-    
-    // Add click event listeners for squares
-    setupBoardClickHandlers();
-    
-    // Adjust board size on window resize
-    window.addEventListener('resize', board.resize);
+    try {
+        // Initialize the chess board
+        board = Chessboard('board', config);
+        
+        // Add click event listeners for squares
+        setupBoardClickHandlers();
+        
+        // Adjust board size on window resize
+        window.addEventListener('resize', board.resize);
+        
+        debugLog('Board initialized successfully');
+    } catch (error) {
+        console.error('Error initializing board:', error);
+        showNotification('Error initializing chess board. Please refresh the page.', true);
+    }
 }
 
 // Set up click handlers for the chess board
@@ -201,92 +222,163 @@ function updateBoardOrientation(color) {
 socket.on('connect', () => {
     connectionStatus.className = 'connection-status connected';
     connectionStatus.textContent = 'Connected to server';
+    connectionAttempts = 0;
+    debugLog('Socket connected');
     
     // Check if there's an active game
     socket.emit('getGameStatus');
 });
 
-socket.on('disconnect', () => {
+socket.on('connect_error', (error) => {
+    connectionAttempts++;
     connectionStatus.className = 'connection-status disconnected';
-    connectionStatus.textContent = 'Disconnected from server';
+    connectionStatus.textContent = `Connection error (attempt ${connectionAttempts})`;
+    console.error('Socket.io connection error:', error);
+    showNotification(`Connection error: ${error.message}. Retrying...`, true);
+});
+
+socket.on('connect_timeout', () => {
+    connectionAttempts++;
+    connectionStatus.className = 'connection-status disconnected';
+    connectionStatus.textContent = `Connection timeout (attempt ${connectionAttempts})`;
+    console.error('Socket.io connection timeout');
+    showNotification('Connection timeout. Retrying...', true);
+});
+
+socket.on('reconnect', (attemptNumber) => {
+    connectionStatus.className = 'connection-status connected';
+    connectionStatus.textContent = 'Reconnected to server';
+    debugLog(`Socket reconnected after ${attemptNumber} attempts`);
+    showNotification('Reconnected to server!');
+    
+    // Re-check game status after reconnection
+    socket.emit('getGameStatus');
+});
+
+socket.on('reconnect_attempt', (attemptNumber) => {
+    connectionStatus.className = 'connection-status connecting';
+    connectionStatus.textContent = `Reconnecting (attempt ${attemptNumber})...`;
+    debugLog(`Socket reconnection attempt #${attemptNumber}`);
+});
+
+socket.on('reconnect_error', (error) => {
+    connectionStatus.className = 'connection-status disconnected';
+    connectionStatus.textContent = 'Reconnection error';
+    console.error('Socket.io reconnection error:', error);
+    showNotification('Failed to reconnect. Will try again...', true);
+});
+
+socket.on('reconnect_failed', () => {
+    connectionStatus.className = 'connection-status disconnected';
+    connectionStatus.textContent = 'Reconnection failed';
+    console.error('Socket.io reconnection failed after all attempts');
+    showNotification('Failed to reconnect after multiple attempts. Please refresh the page.', true);
+});
+
+socket.on('disconnect', (reason) => {
+    connectionStatus.className = 'connection-status disconnected';
+    connectionStatus.textContent = `Disconnected: ${reason}`;
+    console.error('Socket disconnected:', reason);
     clearInterval(timerInterval);
-    showNotification('Lost connection to server', true);
+    showNotification(`Lost connection to server: ${reason}`, true);
+    
+    // If the disconnection was due to client errors, try to refresh the socket connection
+    if (reason === 'io client disconnect' || reason === 'io server disconnect') {
+        debugLog('Attempting to reconnect manually...');
+        setTimeout(() => {
+            socket.connect();
+        }, 1000);
+    }
 });
 
 // Game state update
 socket.on('gameState', (state) => {
-  console.log('Game state update received:', state);
+  debugLog('Game state update received', state);
+  lastGameState = state;
   
-  // Update bot color if available
-  if (state.botColor && state.botColor !== botColor) {
-    botColor = state.botColor;
-    updateBoardOrientation(botColor);
-  }
-  
-  if (state.fen) {
-    try {
-      // Load the new position
-      game = new Chess(state.fen);
-      board.position(state.fen, false); // false = don't animate for smoother updates
-      
-      // Update current turn
-      const turn = state.turn === 'w' ? 'White' : 'Black';
-      currentTurn.textContent = turn;
-      
-      // Update game status
-      if (state.inProgress) {
-        updateGameStatus('active', 'Game in progress');
-        updateGameStatusMessage(`Game in progress. ${botColor === state.turn ? 'Your turn to vote!' : 'Waiting for opponent move...'}`);
-      }
-      
-      // Create map of legal moves if provided
-      if (state.legalMoves) {
-        createLegalMovesMap(state.legalMoves);
-      }
-    } catch (e) {
-      console.error('Error updating game state:', e);
-      showNotification('Error updating game state', true);
+  try {
+    // Update bot color if available
+    if (state.botColor && state.botColor !== botColor) {
+      botColor = state.botColor;
+      debugLog('Bot color updated', botColor);
+      updateBoardOrientation(botColor);
     }
-  }
-  
-  // Update voting timer
-  if (state.votingEndTime) {
-    votingEndTime = state.votingEndTime;
-    isVotingPeriod = true;
-    updateTimer();
-  } else {
-    clearInterval(timerInterval);
-    isVotingPeriod = false;
-  }
-  
-  // Update game status
-  if (state.isGameOver) {
-    updateGameStatus('ended', 'Game over');
-    updateGameStatusMessage('Game over. The match has ended.');
-    clearInterval(timerInterval);
-    isVotingPeriod = false;
-  } else if (state.isCheck) {
-    if (state.isCheckmate) {
-      updateGameStatus('ended', 'Checkmate');
-      updateGameStatusMessage('Checkmate! Game over.');
-      isVotingPeriod = false;
+    
+    if (state.fen) {
+      try {
+        // Load the new position
+        game = new Chess(state.fen);
+        board.position(state.fen, false); // false = don't animate for smoother updates
+        
+        // Update current turn
+        const turn = state.turn === 'w' ? 'White' : 'Black';
+        currentTurn.textContent = turn;
+        
+        // Update game status
+        if (state.inProgress) {
+          updateGameStatus('active', 'Game in progress');
+          updateGameStatusMessage(`Game in progress. ${botColor === state.turn ? 'Your turn to vote!' : 'Waiting for opponent move...'}`);
+        }
+        
+        // Create map of legal moves if provided
+        if (state.legalMoves) {
+          createLegalMovesMap(state.legalMoves);
+        }
+      } catch (e) {
+        console.error('Error updating game state:', e);
+        showNotification('Error updating game state: ' + e.message, true);
+      }
     } else {
-      updateGameStatusMessage('Check!');
+      debugLog('Warning: Game state update missing FEN position');
     }
+    
+    // Update voting timer
+    if (state.votingEndTime) {
+      votingEndTime = state.votingEndTime;
+      isVotingPeriod = true;
+      updateTimer();
+    } else {
+      clearInterval(timerInterval);
+      isVotingPeriod = false;
+    }
+    
+    // Update game status
+    if (state.isGameOver) {
+      updateGameStatus('ended', 'Game over');
+      updateGameStatusMessage('Game over. The match has ended.');
+      clearInterval(timerInterval);
+      isVotingPeriod = false;
+    } else if (state.isCheck) {
+      if (state.isCheckmate) {
+        updateGameStatus('ended', 'Checkmate');
+        updateGameStatusMessage('Checkmate! Game over.');
+        isVotingPeriod = false;
+      } else {
+        updateGameStatusMessage('Check!');
+      }
+    }
+  } catch (error) {
+    console.error('Error processing game state update:', error);
+    showNotification('Error processing game update. Please refresh the page.', true);
   }
 });
 
 // Voting period start
 socket.on('votingStarted', (data) => {
-    console.log('Voting period started:', data);
+    debugLog('Voting period started', data);
     
-    // Update bot color if available
-    if (data.botColor && data.botColor !== botColor) {
-        botColor = data.botColor;
-        updateBoardOrientation(botColor);
+    try {
+        // Update bot color if available
+        if (data.botColor && data.botColor !== botColor) {
+            botColor = data.botColor;
+            updateBoardOrientation(botColor);
+        }
+        
+        startVotingPeriod(data);
+    } catch (error) {
+        console.error('Error starting voting period:', error);
+        showNotification('Error starting voting period: ' + error.message, true);
     }
-    
-    startVotingPeriod(data);
 });
 
 // Vote updates
@@ -345,6 +437,7 @@ socket.on('gameError', (data) => {
 
 // No active game notification
 socket.on('noActiveGame', () => {
+    debugLog('No active game notification received');
     updateGameStatus('waiting', 'Waiting for a game');
     updateGameStatusMessage('No active game. Waiting for a challenge from thatsjustchips...');
 });
