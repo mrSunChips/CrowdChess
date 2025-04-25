@@ -31,9 +31,18 @@ function readUserSettings() {
     // Check for Lichess token in session storage
     const lichessToken = sessionStorage.getItem('lichessToken');
     if (lichessToken) {
+      // Validate token format
+      if (!lichessToken.startsWith('lip_')) {
+        console.warn('Warning: Lichess token does not have the expected format (should start with "lip_")');
+        showNotification('Warning: Your Lichess token may be invalid. It should start with "lip_"', 'warning');
+      }
+      
       // Send token to server when connecting
       socket.auth = { token: lichessToken };
       console.log('Lichess token found and will be used for authentication');
+    } else {
+      console.warn('No Lichess token found. Some functionality may be limited.');
+      showNotification('No Lichess API token found. Please go to Setup to configure a token.', 'warning');
     }
     
     // Set board orientation from URL or localStorage
@@ -62,6 +71,7 @@ function readUserSettings() {
     sendConfigToServer(urlParams);
   } catch (error) {
     console.error('Error reading user settings:', error);
+    showNotification(`Error loading settings: ${error.message}`, 'error');
   }
 }
 
@@ -138,8 +148,8 @@ document.addEventListener('DOMContentLoaded', () => {
  * Initialize the chess board
  */
 function initializeBoard() {
-  const config = {
-    position: 'start',
+    const config = {
+        position: 'start',
     orientation: boardOrientation,
     pieceTheme: 'img/chesspieces/wikipedia/{piece}.png',
     draggable: true,
@@ -150,8 +160,8 @@ function initializeBoard() {
     onMouseoverSquare: onMouseoverSquare
   };
   
-  board = Chessboard('board', config);
-  
+    board = Chessboard('board', config);
+    
   // Handle window resize
   window.addEventListener('resize', () => board.resize());
 }
@@ -435,8 +445,8 @@ function handleVotesUpdated(data) {
  */
 function handleVoteAccepted(data) {
   console.log('Vote accepted:', data);
-  hasVoted = true;
-  yourVote = data.move;
+    hasVoted = true;
+    yourVote = data.move;
   
   // Update UI
   updateSelectedMoveDisplay(formatMove(data.move), true);
@@ -448,7 +458,7 @@ function handleVoteAccepted(data) {
   }
   
   // Disable vote button until move changes
-  voteButton.disabled = true;
+    voteButton.disabled = true;
 }
 
 /**
@@ -507,7 +517,7 @@ function handleMoveSelected(data) {
  */
 function handleGameConnected(data) {
   showNotification(`Connected to game ${data.gameId}`, 'success');
-  updateGameStatusMessage('Game connected. Waiting for moves...');
+    updateGameStatusMessage('Game connected. Waiting for moves...');
 }
 
 /**
@@ -515,18 +525,18 @@ function handleGameConnected(data) {
  * @param {Object} data - Game end data
  */
 function handleGameEnded(data) {
-  clearInterval(timerInterval);
-  votingEndTime = null;
-  isVotingPeriod = false;
-  updateGameStatus('ended', 'Game over');
-  updateGameStatusMessage('Game over. The match has ended.');
+    clearInterval(timerInterval);
+    votingEndTime = null;
+    isVotingPeriod = false;
+    updateGameStatus('ended', 'Game over');
+    updateGameStatusMessage('Game over. The match has ended.');
   showNotification('Game has ended', 'info');
-  
-  // Reset UI elements
-  voteButton.disabled = true;
-  hasVoted = false;
-  yourVote = null;
-  selectedMoveDisplay.innerHTML = `<p>Game has ended.</p>`;
+    
+    // Reset UI elements
+    voteButton.disabled = true;
+    hasVoted = false;
+    yourVote = null;
+    selectedMoveDisplay.innerHTML = `<p>Game has ended.</p>`;
 }
 
 /**
@@ -667,10 +677,10 @@ function updateBoardOrientation(color) {
  * @returns {string} - Formatted move
  */
 function formatMove(moveUci) {
-  if (!moveUci || moveUci.length < 4) return moveUci;
-  
-  const from = moveUci.substring(0, 2);
-  const to = moveUci.substring(2, 4);
+    if (!moveUci || moveUci.length < 4) return moveUci;
+    
+    const from = moveUci.substring(0, 2);
+    const to = moveUci.substring(2, 4);
   let moveText = `${from.toUpperCase()} → ${to.toUpperCase()}`;
   
   try {
@@ -705,9 +715,9 @@ function updateVoteList(votes, highlightMove = null) {
   
   if (!votes || Object.keys(votes).length === 0) {
     voteListContainer.innerHTML = '<div class="no-votes">No votes yet</div>';
-    return;
-  }
-  
+        return;
+    }
+    
   // Find highest vote count to determine winning move
   const voteEntries = Object.entries(votes);
   const maxVotes = Math.max(...voteEntries.map(([_, count]) => count));
@@ -733,8 +743,8 @@ function updateVoteList(votes, highlightMove = null) {
         </div>
         <span class="vote-percentage">${percentage}%</span>
         <span class="vote-number">${count}</span>
-      </div>
-    `;
+                </div>
+            `;
     
     // Add click event to select this move
     voteItem.addEventListener('click', () => {
@@ -753,14 +763,14 @@ function updateVoteList(votes, highlightMove = null) {
  * Update the timer display
  */
 function updateTimer() {
-  if (!votingEndTime) {
-    timerDisplay.textContent = '00:00';
-    return;
-  }
-  
-  const now = Date.now();
-  const timeLeft = Math.max(0, votingEndTime - now);
-  
+    if (!votingEndTime) {
+        timerDisplay.textContent = '00:00';
+        return;
+    }
+    
+    const now = Date.now();
+    const timeLeft = Math.max(0, votingEndTime - now);
+    
   if (timeLeft <= 0) {
     clearInterval(timerInterval);
     timerDisplay.textContent = '00:00';
@@ -768,9 +778,9 @@ function updateTimer() {
   }
   
   // Calculate minutes and seconds
-  const minutes = Math.floor(timeLeft / 60000);
-  const seconds = Math.floor((timeLeft % 60000) / 1000);
-  
+    const minutes = Math.floor(timeLeft / 60000);
+    const seconds = Math.floor((timeLeft % 60000) / 1000);
+    
   // Display timer
   timerDisplay.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   
@@ -788,8 +798,8 @@ function updateTimer() {
  * @param {string} message - Status message
  */
 function updateGameStatus(status, message) {
-  statusIndicator.className = 'status-indicator';
-  statusIndicator.classList.add(`status-${status}`);
+    statusIndicator.className = 'status-indicator';
+    statusIndicator.classList.add(`status-${status}`);
   statusIndicator.textContent = `Game Status: ${message}`;
 }
 
@@ -809,7 +819,7 @@ function updateConnectionStatus(status, message) {
  * @param {string} message - Status message
  */
 function updateGameStatusMessage(message) {
-  gameStatusMessage.innerHTML = `<p>${message}</p>`;
+    gameStatusMessage.innerHTML = `<p>${message}</p>`;
 }
 
 /**
@@ -883,20 +893,20 @@ function removeHighlights() {
  * @param {string} type - Notification type ('error', 'success', 'info')
  */
 function showNotification(message, type = 'info') {
-  const notification = document.createElement('div');
+    const notification = document.createElement('div');
   notification.className = `notification ${type}`;
-  notification.textContent = message;
-  
+    notification.textContent = message;
+    
   notificationContainer.appendChild(notification);
-  
-  // Remove after a delay
+    
+    // Remove after a delay
   setTimeout(() => {
     notification.style.opacity = '0';
     setTimeout(() => {
       if (notification.parentNode) {
         notification.parentNode.removeChild(notification);
       }
-    }, 300);
+        }, 300);
   }, 5000);
 }
 

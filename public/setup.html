@@ -141,6 +141,32 @@
         .game-info-box strong {
             font-weight: 500;
         }
+        
+        .token-help {
+            margin-top: 10px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+        
+        .token-help details {
+            margin-bottom: 10px;
+        }
+        
+        .token-help details summary {
+            cursor: pointer;
+            font-weight: 500;
+            color: var(--secondary-color);
+        }
+        
+        .token-help details ol {
+            padding-left: 20px;
+            margin-top: 10px;
+        }
+        
+        .token-help details li {
+            margin-bottom: 5px;
+            line-height: 1.4;
+        }
     </style>
 </head>
 <body>
@@ -161,6 +187,21 @@
                 <label for="lichess-token">Lichess API Token</label>
                 <input type="password" id="lichess-token" placeholder="Enter your Lichess API token">
                 <small>Required for connecting to Lichess. Create one at <a href="https://lichess.org/account/oauth/token" target="_blank">lichess.org/account/oauth/token</a></small>
+                
+                <div class="token-help">
+                    <details>
+                        <summary>How to create a proper Lichess API token</summary>
+                        <ol>
+                            <li>Go to <a href="https://lichess.org/account/oauth/token" target="_blank">lichess.org/account/oauth/token</a></li>
+                            <li>Click "New personal access token"</li>
+                            <li>Give it a description (e.g., "CrowdChess")</li>
+                            <li>Under "Scopes", make sure to select <strong>bot:play</strong></li>
+                            <li>Click "Create"</li>
+                            <li>Copy the token (it will start with "lip_") and paste it here</li>
+                            <li>Note: You can only see the token once when it's created</li>
+                        </ol>
+                    </details>
+                </div>
             </div>
             
             <div class="form-row">
@@ -181,7 +222,8 @@
             
             <div class="form-group">
                 <label for="server-url">Server URL (Optional)</label>
-                <input type="text" id="server-url" placeholder="Leave empty for default localhost:3000">
+                <input type="text" id="server-url" placeholder="Enter full URL where CrowdChess is deployed (leave empty if using same origin)">
+                <small>Only needed if the CrowdChess server is hosted on a different domain than this page</small>
             </div>
             
             <div id="api-status" class="api-status" style="display: none;"></div>
@@ -238,6 +280,12 @@
                 return;
             }
             
+            // Check if token has the correct format (personal access tokens start with "lip_")
+            if (!apiToken.startsWith('lip_')) {
+                showApiStatus('Invalid token format. Lichess personal access tokens should start with "lip_"', 'error');
+                return;
+            }
+            
             try {
                 apiStatusElement.innerHTML = 'Testing connection...';
                 apiStatusElement.className = 'api-status';
@@ -257,9 +305,21 @@
                     showApiStatus(`Connection successful! Connected as: ${data.account.username}`, 'success');
                 } else {
                     showApiStatus(`Connection failed: ${data.message || 'Unknown error'}`, 'error');
+                    
+                    // Add additional guidance if the token is invalid
+                    if (data.message && data.message.includes('Invalid or expired')) {
+                        setTimeout(() => {
+                            showApiStatus(`Make sure you've created a token with 'bot:play' scope at lichess.org/account/oauth/token`, 'error');
+                        }, 3000);
+                    }
                 }
             } catch (error) {
-                showApiStatus(`Connection error: ${error.message}`, 'error');
+                // Handle the case where the server might be unreachable
+                if (error.message && error.message.includes('Failed to fetch')) {
+                    showApiStatus(`Cannot connect to server at ${serverUrl}. Check the Server URL or ensure the server is running.`, 'error');
+                } else {
+                    showApiStatus(`Connection error: ${error.message}`, 'error');
+                }
             }
         }
         

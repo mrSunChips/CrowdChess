@@ -55,19 +55,26 @@ const LICHESS_API_BASE = 'https://lichess.org/api';
 // Check if API token is working
 app.get('/api-status', async (req, res) => {
   try {
-    if (!LICHESS_API_TOKEN) {
-      return res.status(500).json({
+    // Get token from Authorization header
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.startsWith('Bearer ') 
+      ? authHeader.substring(7) 
+      : null;
+    
+    if (!token) {
+      return res.status(400).json({
         status: 'error',
-        message: 'No API token configured',
+        message: 'No API token provided in request',
         tokenProvided: false
       });
     }
     
+    // Use the token from the request to check with Lichess API
     const response = await axios({
       method: 'get',
-      url: `${LICHESS_API_BASE}/account`,
+      url: 'https://lichess.org/api/account',
       headers: {
-        'Authorization': `Bearer ${LICHESS_API_TOKEN}`
+        'Authorization': `Bearer ${token}`
       },
       timeout: 10000
     });
@@ -82,11 +89,25 @@ app.get('/api-status', async (req, res) => {
     });
   } catch (error) {
     console.error('API status check failed:', error.message);
+    
+    // Improved error message
+    let errorMsg = 'API token check failed';
+    if (error.response) {
+      // Server responded with non-2xx status
+      if (error.response.status === 401) {
+        errorMsg = 'Invalid or expired API token';
+      } else {
+        errorMsg = `Lichess API error: ${error.response.status}`;
+      }
+    } else if (error.request) {
+      // Request made but no response received
+      errorMsg = 'Could not connect to Lichess API';
+    }
+    
     res.status(500).json({
       status: 'error',
-      message: 'API token check failed',
-      error: error.message,
-      tokenProvided: !!LICHESS_API_TOKEN
+      message: errorMsg,
+      error: error.message
     });
   }
 });
