@@ -147,75 +147,101 @@ async function connectToLichessGame(gameId) {
   }
 }
 
-// Determine which color the bot is playing
+// Determine which color the bot is playing with rate limit handling
 async function determinePlayerColors(gameId) {
   try {
+    // First, try to determine from the gameFull data we already have
+    // This avoids an extra API call
+    if (gameInProgress && currentGameId === gameId && botColor) {
+      console.log(`Bot color already determined: ${botColor}`);
+      return botColor;
+    }
+    
+    // Only make this call if we absolutely need to
+    console.log(`Determining player colors for game ${gameId}`);
+    
     const response = await axios({
       method: 'get',
       url: `${LICHESS_API_BASE}/bot/game/stream/${gameId}`,
       headers: {
         'Authorization': `Bearer ${LICHESS_API_TOKEN}`
       },
-      responseType: 'json'
+      responseType: 'json',
+      timeout: 5000 // Shorter timeout for this call
     });
 
     if (response.data) {
       const gameData = response.data;
       
-      if (gameData.white && gameData.white.id === BOT_ACCOUNT.toLowerCase()) {
+      if (gameData.white && gameData.white.id.toLowerCase() === BOT_ACCOUNT.toLowerCase()) {
         botColor = 'white';
         colorDetermined = true;
         console.log('Bot is playing as white');
-      } else if (gameData.black && gameData.black.id === BOT_ACCOUNT.toLowerCase()) {
+        return 'white';
+      } else if (gameData.black && gameData.black.id.toLowerCase() === BOT_ACCOUNT.toLowerCase()) {
         botColor = 'black';
         colorDetermined = true;
         console.log('Bot is playing as black');
-      } else {
-        console.log('Could not determine bot color from game data:', gameData);
-        
-        // Fallback method - check account's ongoing games
-        const accountResponse = await axios({
-          method: 'get',
-          url: `${LICHESS_API_BASE}/account/playing`,
-          headers: {
-            'Authorization': `Bearer ${LICHESS_API_TOKEN}`
-          }
-        });
-        
-        if (accountResponse.data && accountResponse.data.nowPlaying) {
-          const game = accountResponse.data.nowPlaying.find(g => g.gameId === gameId);
-          if (game) {
-            botColor = game.color;
-            colorDetermined = true;
-            console.log(`Bot is playing as ${botColor} (determined from account data)`);
-          }
-        }
+        return 'black';
       }
     }
+    
+    // If we couldn't determine the color, use a fallback method
+    return inferBotColor();
   } catch (error) {
     console.error('Error determining player colors:', error.message);
     
-    // Fallback - attempt to infer from game state
-    // This isn't ideal but better than nothing
-    if (currentChess && currentChess.turn() === 'w') {
-      // If it's white's turn and we need to vote, we're playing as white
-      if (isVotingNeeded()) {
+    // If we hit rate limits, wait before trying again
+    if (error.response && error.response.status === 429) {
+      console.log('Rate limited, waiting 60 seconds before retrying');
+      await new Promise(resolve => setTimeout(resolve, 60000));
+    }
+    
+    // Use fallback method - attempt to infer from game state
+    return inferBotColor();
+  }
+}
+
+// Infer bot color from the current game state
+function inferBotColor() {
+  // If we already have a determined color, return it
+  if (colorDetermined && botColor) {
+    return botColor;
+  }
+  
+  // Try to infer from the current position and turn
+  if (currentChess) {
+    const turn = currentChess.turn();
+    
+    // If we've received a full game update, we can use the white/black player info
+    if (lastGameFullData) {
+      if (lastGameFullData.white && lastGameFullData.white.id && 
+          lastGameFullData.white.id.toLowerCase() === BOT_ACCOUNT.toLowerCase()) {
         botColor = 'white';
         colorDetermined = true;
-        console.log('Bot is playing as white (inferred from game state)');
-      }
-    } else if (currentChess && currentChess.turn() === 'b') {
-      // If it's black's turn and we need to vote, we're playing as black
-      if (isVotingNeeded()) {
+        console.log('Bot is playing as white (inferred from lastGameFullData)');
+        return 'white';
+      } else if (lastGameFullData.black && lastGameFullData.black.id && 
+                lastGameFullData.black.id.toLowerCase() === BOT_ACCOUNT.toLowerCase()) {
         botColor = 'black';
         colorDetermined = true;
-        console.log('Bot is playing as black (inferred from game state)');
+        console.log('Bot is playing as black (inferred from lastGameFullData)');
+        return 'black';
       }
+    }
+    
+    // Last resort - check if we need to vote based on current turn
+    if (isVotingNeeded() && !botColor) {
+      botColor = turn === 'w' ? 'white' : 'black';
+      colorDetermined = true;
+      console.log(`Bot is playing as ${botColor} (inferred from voting state)`);
+      return botColor;
     }
   }
   
-  // Broadcast the updated game state with the bot color
-  broadcastGameState();
+  // If all else fails, assume black (this is just a fallback)
+  console.log('Could not determine bot color, defaulting to black');
+  return 'black';
 }
 
 // Check if voting is needed based on whose turn it is
@@ -230,6 +256,7 @@ function handleGameUpdate(data) {
   
   // Handle different types of game state data
   if (data.type === 'gameFull') {
+    lastGameFullData = data;
     // Full game data received
     console.log('Game full data:', JSON.stringify(data).substring(0, 500) + '...');
     
