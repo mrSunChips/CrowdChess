@@ -45,6 +45,7 @@ let lastEventTime = Date.now();
 let streamReconnectAttempts = 0;
 let botColor = null; // 'white' or 'black'
 let colorDetermined = false;
+let lastGameFullData = null;
 
 // Debug endpoint
 app.get('/debug', (req, res) => {
@@ -268,10 +269,13 @@ function handleGameUpdate(data) {
     // Game state update received
     console.log('Game state update:', JSON.stringify(data).substring(0, 500) + '...');
     
-    if (data.moves) {
+    if (data.moves !== undefined) {
       // Reset the chess instance and replay all moves
       currentChess = new Chess();
       applyMoves(data.moves);
+      
+      // Update legal moves
+      updateLegalMoves();
       
       // Check if it's our turn now
       if (isVotingNeeded()) {
@@ -284,12 +288,11 @@ function handleGameUpdate(data) {
         // Start new voting period
         votes = {};
         voterIPs = {};
-        updateLegalMoves();
         startVotingPeriod();
       }
+      
+      broadcastGameState();
     }
-    
-    broadcastGameState();
   } else if (data.type === 'chatLine') {
     // Chat message received - could be used for announcements
     console.log('Chat message:', data);
@@ -324,14 +327,23 @@ function applyMoves(movesString) {
   // Update FEN
   currentFen = currentChess.fen();
   console.log('Updated FEN:', currentFen);
-  updateLegalMoves();
 }
 
 // Update legal moves based on current position
 function updateLegalMoves() {
   try {
-    const moves = currentChess.moves({ verbose: true });
-    legalMoves = moves.map(move => {
+    const chessMoves = currentChess.moves({ verbose: true });
+    
+    // Filter moves based on the bot's color
+    const filteredMoves = botColor ? 
+      chessMoves.filter(move => {
+        const piece = currentChess.get(move.from);
+        return piece && ((botColor === 'white' && piece.color === 'w') || 
+                         (botColor === 'black' && piece.color === 'b'));
+      }) : 
+      chessMoves;
+    
+    legalMoves = filteredMoves.map(move => {
       // Convert chess.js move format to UCI format
       let uci = move.from + move.to;
       if (move.promotion) {
@@ -340,11 +352,23 @@ function updateLegalMoves() {
       return { uci, move };
     });
     
-    console.log('Legal moves updated, count:', legalMoves.length);
+    console.log(`Legal moves updated, count: ${legalMoves.length}, bot color: ${botColor}`);
   } catch (e) {
     console.error('Error updating legal moves:', e.message);
     legalMoves = [];
   }
+}
+
+// Check if voting is needed based on whose turn it is
+function isVotingNeeded() {
+  if (!botColor) return false;
+  
+  const isOurTurn = (botColor === 'white' && currentChess.turn() === 'w') || 
+                   (botColor === 'black' && currentChess.turn() === 'b');
+                   
+  console.log(`Checking if voting is needed: botColor=${botColor}, current turn=${currentChess.turn()}, isOurTurn=${isOurTurn}`);
+  
+  return isOurTurn;
 }
 
 // Start voting period timer
@@ -408,15 +432,29 @@ async function countVotesAndMove() {
     
     // If there are legal moves but no votes, just pick a random legal move
     if (legalMoves.length > 0) {
-      const randomMove = legalMoves[Math.floor(Math.random() * legalMoves.length)].uci;
-      console.log('Selecting random move:', randomMove);
-      io.emit('moveSelected', { move: randomMove, votes: 0, random: true });
+      // Filter for moves that belong to the bot's color
+      const botColorMoves = legalMoves.filter(move => {
+        const from = move.uci.substring(0, 2);
+        const piece = currentChess.get(from);
+        return piece && ((botColor === 'white' && piece.color === 'w') || 
+                         (botColor === 'black' && piece.color === 'b'));
+      });
       
-      try {
-        await makeMove(randomMove);
-      } catch (error) {
-        console.error('Error making random move:', error);
-        startVotingPeriod();
+      if (botColorMoves.length > 0) {
+        const randomMove = botColorMoves[Math.floor(Math.random() * botColorMoves.length)].uci;
+        console.log(`Selecting random ${botColor} move:`, randomMove);
+        io.emit('moveSelected', { move: randomMove, votes: 0, random: true });
+        
+        try {
+          await makeMove(randomMove);
+        } catch (error) {
+          console.error('Error making random move:', error);
+          startVotingPeriod();
+        }
+      } else {
+        console.log(`No legal moves found for ${botColor} pieces`);
+        gameInProgress = false;
+        io.emit('gameEnded', { gameId: currentGameId, reason: 'No legal moves' });
       }
     } else {
       // No legal moves, game is probably over
