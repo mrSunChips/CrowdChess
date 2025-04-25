@@ -13,6 +13,7 @@ let yourVote = null;
 let boardOrientation = 'white';
 let isVotingPeriod = false;
 let legalMovesMap = {};
+let botColor = null;
 
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
@@ -81,8 +82,9 @@ function selectPiece(square) {
     // Get the piece at the clicked square
     const piece = game.get(square);
     
-    // Only select pieces of the current turn color
-    if (piece && piece.color === game.turn()) {
+    // Only select pieces of the correct color (botColor)
+    if (piece && ((botColor === 'white' && piece.color === 'w') || 
+                 (botColor === 'black' && piece.color === 'b'))) {
         selectedPiece = square;
         
         // Highlight the selected square
@@ -94,6 +96,8 @@ function selectPiece(square) {
         // Update selected move display
         selectedMoveDisplay.innerHTML = `<p>Selected: ${getPieceName(piece)} at ${square.toUpperCase()}. Click on a destination square.</p>`;
         selectedMoveDisplay.classList.add('active');
+    } else {
+        showNotification('You can only move the bot\'s pieces', true);
     }
 }
 
@@ -176,6 +180,17 @@ function createLegalMovesMap(legalMoves) {
     console.log('Legal moves map created:', legalMovesMap);
 }
 
+// Update board orientation based on bot color
+function updateBoardOrientation(color) {
+    if (!board || !color) return;
+    
+    // Set the board orientation to match the bot's pieces
+    // This makes it easier for users to interact with the bot's pieces
+    boardOrientation = color;
+    board.orientation(boardOrientation);
+    console.log('Board orientation updated to:', boardOrientation);
+}
+
 // Socket event handlers
 socket.on('connect', () => {
     connectionStatus.className = 'connection-status connected';
@@ -195,12 +210,26 @@ socket.on('disconnect', () => {
 // Game state update
 socket.on('gameState', (state) => {
     console.log('Game state update received:', state);
+    
+    // Update bot color if available
+    if (state.botColor && state.botColor !== botColor) {
+        botColor = state.botColor;
+        updateBoardOrientation(botColor);
+    }
+    
     updateGameState(state);
 });
 
 // Voting period start
 socket.on('votingStarted', (data) => {
     console.log('Voting period started:', data);
+    
+    // Update bot color if available
+    if (data.botColor && data.botColor !== botColor) {
+        botColor = data.botColor;
+        updateBoardOrientation(botColor);
+    }
+    
     startVotingPeriod(data);
 });
 
@@ -234,7 +263,7 @@ socket.on('voteRejected', (data) => {
 // Game connection events
 socket.on('gameConnected', (data) => {
     showNotification(`Connected to game ${data.gameId}`);
-    updateGameStatusMessage('Game connected. Waiting for the first move...');
+    updateGameStatusMessage('Game connected. Waiting for moves...');
 });
 
 socket.on('gameEnded', (data) => {
@@ -309,10 +338,6 @@ function updateGameState(state) {
         if (state.legalMoves) {
             createLegalMovesMap(state.legalMoves);
         }
-        
-        // Update board orientation to match the bot's color (we want user to interact with bot's pieces)
-        // This would need to be determined from the server
-        // For now, we'll leave it as white
     }
     
     // Update voting timer
@@ -357,7 +382,7 @@ function startVotingPeriod(data) {
     voteButton.textContent = 'Submit Vote';
     
     // Update the selected move display
-    selectedMoveDisplay.innerHTML = `<p>Click on a piece to select it, then click on a destination square.</p>`;
+    selectedMoveDisplay.innerHTML = `<p>Click on a ${botColor} piece to select it, then click on a destination square.</p>`;
     selectedMoveDisplay.classList.remove('active');
     
     // Reset and start timer
@@ -372,7 +397,7 @@ function startVotingPeriod(data) {
     voteListContainer.innerHTML = '<p>No votes yet</p>';
     
     showNotification('Voting has started! Choose your move');
-    updateGameStatusMessage('Your turn to vote! Select a piece and destination.');
+    updateGameStatusMessage(`Your turn to vote! Select a ${botColor} piece and destination.`);
 }
 
 // Format a move for display
