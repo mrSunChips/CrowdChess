@@ -56,6 +56,16 @@ header h1 {
   margin: 0 auto;
   border: 2px solid #2c3e50;
   border-radius: 4px;
+  position: relative;
+}
+
+/* Highlight for selected pieces and squares */
+.highlight-square {
+  box-shadow: inset 0 0 0 4px rgba(255, 215, 0, 0.7) !important;
+}
+
+.highlight-legal {
+  box-shadow: inset 0 0 0 4px rgba(0, 128, 0, 0.5) !important;
 }
 
 /* Game controls */
@@ -173,53 +183,70 @@ header h1 {
   color: #2c3e50;
 }
 
-/* Vote options */
-.vote-options {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 400px;
-  overflow-y: auto;
-  padding-right: 10px;
-  margin-bottom: 20px;
-}
-
-.vote-option {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 15px;
-  background-color: #f9f9f9;
+/* Selected move display */
+.selected-move {
+  margin: 20px 0;
+  padding: 15px;
+  background-color: #f2f6fa;
   border-radius: 5px;
-  cursor: pointer;
-  transition: all 0.2s;
-  border-left: 4px solid transparent;
-}
-
-.vote-option:hover {
-  background-color: #eef2f7;
-  transform: translateX(3px);
-}
-
-.vote-option.selected {
-  background-color: #d4e6f1;
   border-left: 4px solid #3498db;
 }
 
-.vote-move-text {
+.selected-move p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.selected-move.active {
+  background-color: #d4efdf;
+  border-left: 4px solid #2ecc71;
+}
+
+/* Vote stats */
+.vote-stats {
+  margin: 20px 0;
+  padding: 15px;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+}
+
+.vote-stats h3 {
+  margin-bottom: 10px;
+  color: #2c3e50;
+}
+
+.vote-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.vote-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 5px;
+  background-color: #eef2f7;
+  border-radius: 3px;
+}
+
+.vote-item.your-vote {
+  background-color: #d4efdf;
+  border-left: 3px solid #2ecc71;
+}
+
+.vote-item-move {
   font-weight: bold;
 }
 
-.vote-count {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 40px;
-  height: 30px;
-  padding: 0 10px;
+.vote-item-count {
+  display: inline-block;
+  min-width: 25px;
+  padding: 3px 8px;
   background-color: #3498db;
   color: white;
-  border-radius: 15px;
+  border-radius: 10px;
+  text-align: center;
   font-weight: bold;
 }
 
@@ -266,18 +293,19 @@ header h1 {
   color: #c0392b;
 }
 
-/* Challenge URL display */
-.challenge-url {
+/* Game status message */
+.game-status-message {
   margin-top: 15px;
   padding: 15px;
-  background-color: #eaf2f8;
+  background-color: #f2f6fa;
   border-radius: 5px;
-  word-break: break-all;
+  border-left: 4px solid #3498db;
+  font-weight: bold;
 }
 
-.challenge-url a {
-  color: #3498db;
-  font-weight: bold;
+.game-status-message p {
+  margin: 0;
+  line-height: 1.5;
 }
 
 /* Notifications */
@@ -318,19 +346,4 @@ header h1 {
   .board {
     max-width: 100%;
   }
-}
-/* Add this to your existing style.css file */
-
-.game-status-message {
-  margin-top: 15px;
-  padding: 15px;
-  background-color: #f2f6fa;
-  border-radius: 5px;
-  border-left: 4px solid #3498db;
-  font-weight: bold;
-}
-
-.game-status-message p {
-  margin: 0;
-  line-height: 1.5;
 }
