@@ -6,7 +6,7 @@
     <title>CrowdChess - Chess Voting System</title>
     
     <!-- Chess board libraries -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
     
     <!-- Custom CSS -->
     <link rel="stylesheet" href="css/style.css">
@@ -35,23 +35,12 @@
                         <span id="status-indicator" class="status-indicator status-waiting"></span>
                         <span id="game-status">Waiting for a game</span>
                     </div>
-                    <p><strong>Game ID:</strong> <span id="game-id">Not connected</span></p>
                     <p><strong>Current Turn:</strong> <span id="current-turn">White</span></p>
                 </div>
                 
                 <div class="game-controls">
-                    <h3>Game Controls</h3>
-                    
-                    <div class="control-buttons">
-                        <button id="challenge-thatsjustchips" class="btn btn-success">Challenge thatsjustchips</button>
-                    </div>
-                    
-                    <div id="challenge-url-container" style="display: none;" class="challenge-url-container">
-                        <!-- Challenge URL will be displayed here -->
-                    </div>
-                    
                     <div id="game-status-message" class="game-status-message">
-                        <!-- Game status messages will appear here -->
+                        Waiting for a game to start...
                     </div>
                 </div>
             </div>
@@ -67,8 +56,15 @@
                     <div class="timer" id="timer">00:00</div>
                 </div>
                 
-                <div id="vote-options" class="vote-options">
-                    <p>Waiting for the game to start...</p>
+                <div id="selected-move" class="selected-move">
+                    <p>Click on a piece to select it, then click on a destination square.</p>
+                </div>
+                
+                <div id="vote-stats" class="vote-stats">
+                    <h3>Current Votes</h3>
+                    <div id="vote-list" class="vote-list">
+                        <p>No votes yet</p>
+                    </div>
                 </div>
                 
                 <button class="vote-button" id="vote-button" disabled>Submit Vote</button>
@@ -77,9 +73,9 @@
     </div>
     
     <!-- External libraries -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://unpkg.com/chess.js@1.0.0/chess.js"></script>
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     
     <!-- Custom JS -->
