@@ -49,12 +49,20 @@ app.get('/cors-test', (req, res) => {
 });
 
 // Lichess API configuration
-const LICHESS_API_TOKEN = process.env.LICHESS_API_TOKEN || 'lip_H0Yv7axL7HN0aOly6Q18'; // Fallback to the token from logs if not in env
+const LICHESS_API_TOKEN = process.env.LICHESS_API_TOKEN;
 const LICHESS_API_BASE = 'https://lichess.org/api';
 
 // Check if API token is working
 app.get('/api-status', async (req, res) => {
   try {
+    if (!LICHESS_API_TOKEN) {
+      return res.status(500).json({
+        status: 'error',
+        message: 'No API token configured',
+        tokenProvided: false
+      });
+    }
+    
     const response = await axios({
       method: 'get',
       url: `${LICHESS_API_BASE}/account`,
