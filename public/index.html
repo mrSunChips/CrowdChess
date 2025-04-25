@@ -12,16 +12,30 @@
     <div class="container">
         <div class="header">
             <h1>CrowdChess</h1>
-            <p>Play chess collaboratively by voting on the next move</p>
+            <p>Play collaboratively as <strong>thatsjustchipschat</strong> against <strong>thatsjustchips</strong></p>
+            <a href="setup.html" class="setup-link">⚙️ Game Setup</a>
         </div>
 
         <div class="game-info">
             <div id="connection-status" class="connection-status connecting">Connecting to server...</div>
             <div id="status-indicator" class="status-indicator waiting">Game Status: Waiting</div>
-            <div id="game-status-message">Waiting for a game to start...</div>
+            <div id="game-status-message">Waiting for thatsjustchips to start a game...</div>
+            
+            <div class="user-stats">
+                <div id="user-count" class="user-count">Connected Users: <span id="total-users">0</span></div>
+                <div id="voter-count" class="voter-count">Active Voters: <span id="active-voters">0</span></div>
+                <div class="spectator-toggle">
+                    <label for="spectator-mode">
+                        <input type="checkbox" id="spectator-mode"> Spectator Mode
+                    </label>
+                </div>
+            </div>
         </div>
 
         <div class="board-container">
+            <div class="playing-as">
+                <span id="playing-as-text">Crowd playing as: <span id="crowd-color">waiting...</span></span>
+            </div>
             <div id="board"></div>
         </div>
 
@@ -36,13 +50,20 @@
             <button id="vote-button" class="vote-button" disabled>Submit Vote</button>
             <div id="vote-list" class="vote-list"></div>
         </div>
+        
+        <div id="move-history" class="move-history">
+            <h3>Vote History</h3>
+            <div id="history-content" class="history-content">
+                <p>No moves yet</p>
+            </div>
+        </div>
     </div>
 
-    <div id="notification" class="notification">Notification message</div>
+    <div id="notification-container" class="notification-container"></div>
 
     <!-- Scripts -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="js/chessboard-1.0.0.min.js"></script>
     <script src="js/chess.min.js"></script>
     <script src="js/main.js"></script>

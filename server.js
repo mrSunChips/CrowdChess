@@ -112,6 +112,67 @@ let botColor = null; // 'white' or 'black'
 let colorDetermined = false;
 let lastGameFullData = null;
 let apiConnectionStatus = 'disconnected';
+let connectedUsers = new Set(); // Track connected sockets
+let activeVoters = new Set(); // Track active voters
+let moveVoteHistory = []; // Track vote distribution history
+let isSpectatorMode = false; // Track if a user is in spectator mode
+
+// Update connected users count and broadcast to all clients
+function updateConnectedUsers() {
+  io.emit('userCount', {
+    total: connectedUsers.size,
+    activeVoters: activeVoters.size
+  });
+}
+
+// Query parameter endpoint for configuration updates
+app.get('/update-config', (req, res) => {
+  try {
+    const { bot, challenger, voting_time } = req.query;
+    let configUpdated = false;
+    let response = { updated: {}, status: 'ok' };
+    
+    // Update BOT_ACCOUNT if provided
+    if (bot && typeof bot === 'string' && bot.trim()) {
+      BOT_ACCOUNT = bot.trim();
+      configUpdated = true;
+      response.updated.botAccount = BOT_ACCOUNT;
+    }
+    
+    // Update ALLOWED_CHALLENGER if provided
+    if (challenger && typeof challenger === 'string' && challenger.trim()) {
+      ALLOWED_CHALLENGER = challenger.trim();
+      configUpdated = true;
+      response.updated.allowedChallenger = ALLOWED_CHALLENGER;
+    }
+    
+    // Update VOTING_DURATION if provided
+    if (voting_time && !isNaN(parseInt(voting_time))) {
+      const newDuration = parseInt(voting_time) * 1000; // Convert to milliseconds
+      if (newDuration >= 30000 && newDuration <= 300000) { // Between 30s and 5min
+        VOTING_DURATION = newDuration;
+        configUpdated = true;
+        response.updated.votingDuration = VOTING_DURATION / 1000; // Send back in seconds
+      }
+    }
+    
+    if (configUpdated) {
+      console.log('Configuration updated via API:', response.updated);
+      res.json(response);
+    } else {
+      res.status(400).json({
+        status: 'error',
+        message: 'No valid configuration parameters provided'
+      });
+    }
+  } catch (error) {
+    console.error('Error updating configuration:', error);
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
 
 // Debug endpoint with enhanced API information
 app.get('/debug', (req, res) => {
@@ -564,72 +625,91 @@ function startVotingPeriod() {
 
 // Count votes and execute move
 async function countVotesAndMove() {
-  // Reset the voting end time to indicate voting is over
+  if (!isVotingNeeded() || !gameInProgress) {
+    console.log('Voting ended but no move needed or game not in progress');
+    return;
+  }
+  
   votingEndTime = null;
   
-  // Find the move(s) with the most votes
-  let maxVotes = 0;
-  let topMoves = [];
+  console.log('Counting votes:', votes);
+  console.log('Voter IPs:', Object.keys(voterIPs).length);
   
-  for (const [move, voteCount] of Object.entries(votes)) {
-    if (voteCount > maxVotes) {
-      maxVotes = voteCount;
-      topMoves = [move];
-    } else if (voteCount === maxVotes) {
-      topMoves.push(move);
+  // Find the move with the most votes
+  let bestMove = null;
+  let bestVoteCount = 0;
+  
+  for (const [move, count] of Object.entries(votes)) {
+    if (count > bestVoteCount) {
+      bestMove = move;
+      bestVoteCount = count;
     }
   }
   
-  console.log('Vote counting complete. Top moves:', topMoves, 'with', maxVotes, 'votes each');
+  // In case of a tie, randomly select one of the tied moves
+  const tiedMoves = Object.entries(votes)
+    .filter(([_, count]) => count === bestVoteCount)
+    .map(([move, _]) => move);
   
-  // If we have winning moves, randomly select one and execute it
-  if (topMoves.length > 0 && maxVotes > 0) {
-    // Randomly select one of the top moves to break ties
-    const winningMove = topMoves[Math.floor(Math.random() * topMoves.length)];
-    io.emit('moveSelected', { move: winningMove, votes: votes[winningMove] });
+  if (tiedMoves.length > 1) {
+    console.log(`Tie between ${tiedMoves.join(', ')}. Randomly selecting one.`);
+    bestMove = tiedMoves[Math.floor(Math.random() * tiedMoves.length)];
+  }
+  
+  // Save vote history before clearing
+  const voteHistoryEntry = {
+    fen: currentFen,
+    move: bestMove,
+    votes: {...votes},
+    totalVoters: Object.keys(voterIPs).length,
+    timestamp: new Date().toISOString()
+  };
+  moveVoteHistory.push(voteHistoryEntry);
+  // Keep only last 10 moves in history
+  if (moveVoteHistory.length > 10) {
+    moveVoteHistory.shift();
+  }
+  
+  // Clear votes for next round
+  votes = {};
+  voterIPs = {};
+  
+  if (bestMove) {
+    io.emit('moveSelected', {
+      move: bestMove,
+      voteCount: bestVoteCount,
+      totalVotes: Object.values(votes).reduce((a, b) => a + b, 0) || bestVoteCount,
+      wasRandomTiebreaker: tiedMoves.length > 1
+    });
     
+    console.log(`Selected move: ${bestMove} with ${bestVoteCount} votes`);
+    
+    // Make the move on lichess
     try {
-      await makeMove(winningMove);
-      // Voting period will be restarted when new game state is received
+      await makeMove(bestMove);
     } catch (error) {
       console.error('Error making move:', error);
-      // If move fails, restart voting
-      startVotingPeriod();
     }
   } else {
-    console.log('No valid votes received or no legal moves');
-    
-    // If there are legal moves but no votes, just pick a random legal move
+    console.log('No votes received during voting period');
     if (legalMoves.length > 0) {
-      // Filter for moves that belong to the bot's color
-      const botColorMoves = legalMoves.filter(move => {
-        const from = move.uci.substring(0, 2);
-        const piece = currentChess.get(from);
-        return piece && ((botColor === 'white' && piece.color === 'w') || 
-                         (botColor === 'black' && piece.color === 'b'));
+      // If no votes, make a random legal move
+      const randomMove = legalMoves[Math.floor(Math.random() * legalMoves.length)];
+      
+      io.emit('moveSelected', {
+        move: randomMove,
+        voteCount: 0,
+        totalVotes: 0,
+        wasRandom: true
       });
       
-      if (botColorMoves.length > 0) {
-        const randomMove = botColorMoves[Math.floor(Math.random() * botColorMoves.length)].uci;
-        console.log(`Selecting random ${botColor} move:`, randomMove);
-        io.emit('moveSelected', { move: randomMove, votes: 0, random: true });
-        
-        try {
-          await makeMove(randomMove);
-        } catch (error) {
-          console.error('Error making random move:', error);
-          startVotingPeriod();
-        }
-      } else {
-        console.log(`No legal moves found for ${botColor} pieces`);
-        gameInProgress = false;
-        io.emit('gameEnded', { gameId: currentGameId, reason: 'No legal moves' });
+      console.log(`No votes received. Making random move: ${randomMove}`);
+      
+      try {
+        await makeMove(randomMove);
+      } catch (error) {
+        console.error('Error making random move:', error);
       }
-    } else {
-      // No legal moves, game is probably over
-      console.log('No legal moves available, game may be over');
-      gameInProgress = false;
-      io.emit('gameEnded', { gameId: currentGameId, reason: 'No legal moves' });
     }
   }
 }
@@ -884,9 +964,118 @@ function healthCheck() {
   }
 }
 
+// Start server and listen for connections
+server.listen(process.env.PORT || 3000, () => {
+  console.log(`Server listening on port ${process.env.PORT || 3000}`);
+  
+  // Start event streaming
+  streamEvents();
+  
+  // Start health check interval
+  setInterval(healthCheck, 60000);
+});
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  console.log(`New client connected: ${socket.id}`);
+  
+  // Add user to connected users
+  connectedUsers.add(socket.id);
+  updateConnectedUsers();
+  
+  // Check for spectator mode preference
+  socket.on('setSpectatorMode', (isSpectator) => {
+    socket.isSpectator = !!isSpectator;
+    
+    // If user was an active voter and is now a spectator, remove from active voters
+    if (isSpectator && activeVoters.has(socket.id)) {
+      activeVoters.delete(socket.id);
+      updateConnectedUsers();
+    }
+    
+    // Confirm to the client
+    socket.emit('spectatorModeSet', socket.isSpectator);
+  });
+  
+  // Check for auth token in connection
+  if (socket.handshake.auth && socket.handshake.auth.token) {
+    const clientToken = socket.handshake.auth.token;
+    console.log('Client provided Lichess token');
+    
+    // Use token if no server token is configured
+    if (!LICHESS_API_TOKEN) {
+      LICHESS_API_TOKEN = clientToken;
+      console.log('Using client-provided Lichess token');
+      
+      // Restart event streaming with new token
+      if (LICHESS_API_TOKEN) {
+        streamEvents();
+      }
+    }
+  }
+  
+  // Send current game state to new client
+  if (currentGameId && gameInProgress) {
+    socket.emit('gameConnected', {
+      gameId: currentGameId,
+      inProgress: gameInProgress,
+      botColor: botColor
+    });
+    
+    socket.emit('gameState', {
+      fen: currentFen,
+      turn: currentChess.turn(),
+      inProgress: gameInProgress,
+      legalMoves: legalMoves,
+      botColor: botColor
+    });
+    
+    if (isVotingNeeded() && votingEndTime) {
+      socket.emit('votingStarted', {
+        endTime: votingEndTime,
+        votes: votes
+      });
+    }
+  } else {
+    socket.emit('noActiveGame');
+  }
+  
+  // Listen for client events
+  socket.on('disconnect', () => {
+    console.log(`Client disconnected: ${socket.id}`);
+    connectedUsers.delete(socket.id);
+    if (activeVoters.has(socket.id)) {
+      activeVoters.delete(socket.id);
+    }
+    updateConnectedUsers();
+  });
+  
+  socket.on('getGameStatus', () => {
+    if (currentGameId && gameInProgress) {
+      socket.emit('gameConnected', {
+        gameId: currentGameId,
+        inProgress: gameInProgress,
+        botColor: botColor
+      });
+      
+      socket.emit('gameState', {
+        fen: currentFen,
+        turn: currentChess.turn(),
+        inProgress: gameInProgress,
+        legalMoves: legalMoves,
+        botColor: botColor
+      });
+      
+      if (isVotingNeeded() && votingEndTime) {
+        socket.emit('votingStarted', {
+          endTime: votingEndTime,
+          votes: votes
+        });
+      }
+    } else {
+      socket.emit('noActiveGame');
+    }
+  });
   
   // Add enhanced debug information
   console.log('===== CLIENT CONNECTION DEBUG INFO =====');
@@ -903,122 +1092,74 @@ io.on('connection', (socket) => {
   const clientIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
   socket.clientIP = clientIP;
   
-  // Send current game state to new client
-  if (gameInProgress && currentGameId && currentFen) {
-    console.log(`Sending game state to client ${socket.id}`);
-    
-    const gameStatePayload = {
-      gameId: currentGameId,
-      fen: currentFen,
-      turn: currentChess.turn(),
-      legalMoves: legalMoves,
-      votes: votes,
-      votingEndTime: votingEndTime,
-      isGameOver: currentChess.isGameOver(),
-      isCheck: currentChess.isCheck(),
-      isCheckmate: currentChess.isCheckmate(),
-      inProgress: gameInProgress,
-      botColor: botColor
-    };
-    
-    console.log('Game state payload:', JSON.stringify(gameStatePayload).substring(0, 200) + '...');
-    socket.emit('gameState', gameStatePayload);
-    
-    // If voting is in progress, inform the client
-    if (votingEndTime) {
-      console.log(`Sending voting info to client ${socket.id}, ends at: ${new Date(votingEndTime).toISOString()}`);
-      socket.emit('votingStarted', {
-        endTime: votingEndTime,
-        legalMoves: legalMoves,
-        botColor: botColor
-      });
-    }
-  } else {
-    console.log(`No active game, sending noActiveGame event to client ${socket.id}`);
-    socket.emit('noActiveGame');
-  }
-  
   // Handle vote submission
-  socket.on('submitVote', (move) => {
-    console.log('Vote received:', move, 'from IP:', socket.clientIP);
-    
-    if (!votingEndTime || Date.now() >= votingEndTime) {
-      console.log(`Vote rejected: voting period ended or not active`);
-      socket.emit('voteRejected', { reason: 'Voting period has ended' });
+  socket.on('submitVote', async (data) => {
+    // Check if user is in spectator mode
+    if (socket.isSpectator) {
+      socket.emit('voteRejected', {
+        move: data.move,
+        reason: 'You are in spectator mode. Switch to voter mode to submit votes.'
+      });
       return;
     }
     
-    // Validate that the move is legal
-    const isLegal = legalMoves.some(m => m.uci === move);
-    if (!isLegal) {
-      console.log(`Vote rejected: illegal move "${move}"`);
-      socket.emit('voteRejected', { reason: 'Invalid move' });
+    // Add user to active voters
+    activeVoters.add(socket.id);
+    updateConnectedUsers();
+    
+    // Existing vote handling code
+    const { move } = data;
+    
+    // Validate the vote
+    if (!gameInProgress || !isVotingNeeded() || !votingEndTime) {
+      socket.emit('voteRejected', { move, reason: 'No active voting period' });
       return;
     }
     
-    // Check if this IP has already voted
+    if (!legalMoves.includes(move)) {
+      socket.emit('voteRejected', { move, reason: 'Illegal move' });
+      return;
+    }
+    
+    // Check if IP has already voted
     if (voterIPs[socket.clientIP]) {
-      // Allow changing vote
-      const oldMove = voterIPs[socket.clientIP];
-      if (oldMove !== move) {
+      // Update the existing vote
+      const oldVote = voterIPs[socket.clientIP];
+      if (oldVote !== move) {
         // Remove old vote
-        votes[oldMove]--;
-        if (votes[oldMove] <= 0) {
-          delete votes[oldMove];
-        }
+        votes[oldVote]--;
+        // Add new vote
+        votes[move] = (votes[move] || 0) + 1;
+        // Update IP's vote
+        voterIPs[socket.clientIP] = move;
+        socket.emit('voteAccepted', { move, changed: true, previousVote: oldVote });
       } else {
-        // Same vote again, reject
-        console.log(`Vote rejected: duplicate vote for "${move}" from IP ${socket.clientIP}`);
-        socket.emit('voteRejected', { reason: 'You have already voted for this move' });
-        return;
+        socket.emit('voteAccepted', { move, changed: false });
       }
+    } else {
+      // New vote
+      votes[move] = (votes[move] || 0) + 1;
+      voterIPs[socket.clientIP] = move;
+      socket.emit('voteAccepted', { move, changed: false });
     }
-    
-    // Record vote and IP
-    votes[move] = (votes[move] || 0) + 1;
-    voterIPs[socket.clientIP] = move;
-    
-    // Confirm vote to the client
-    socket.emit('voteAccepted', { move });
     
     // Broadcast updated votes to all clients
-    io.emit('votesUpdated', votes);
+    io.emit('votesUpdated', {
+      votes: votes,
+      totalVoters: Object.keys(voterIPs).length,
+      activeVoters: activeVoters.size
+    });
     
     console.log(`Vote for ${move} from IP ${socket.clientIP}, current count: ${votes[move]}`);
   });
-  
-  // Handle game status request
-  socket.on('getGameStatus', () => {
-    console.log(`Game status requested by client ${socket.id}`);
-    if (gameInProgress && currentGameId) {
-      console.log(`Sending game status: gameId=${currentGameId}, turn=${currentChess.turn()}`);
-      socket.emit('gameStatus', {
-        inProgress: gameInProgress,
-        gameId: currentGameId,
-        fen: currentFen,
-        turn: currentChess.turn(),
-        botColor: botColor
-      });
-    } else {
-      console.log(`No active game to report for status request`);
-      socket.emit('noActiveGame');
-    }
-  });
-  
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-  });
 });
 
-// Start streaming events from Lichess
-streamEvents();
-
-// Start health check interval
-setInterval(healthCheck, 60000); // Check every minute
-
-// Start the server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Add route to get vote history
+app.get('/vote-history', (req, res) => {
+  res.json({
+    history: moveVoteHistory,
+    currentVotes: votes,
+    activeVoters: activeVoters.size,
+    totalConnected: connectedUsers.size
+  });
 });

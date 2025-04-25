@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdChess - Game Setup</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        .setup-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .setup-form {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 16px;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .form-row .form-group {
+            flex: 1;
+        }
+        
+        .setup-actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+        }
+        
+        .setup-button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        
+        .primary-button {
+            background-color: var(--secondary-color);
+            color: white;
+        }
+        
+        .primary-button:hover {
+            background-color: #2980b9;
+        }
+        
+        .secondary-button {
+            background-color: #f5f5f5;
+            color: var(--text-color);
+        }
+        
+        .secondary-button:hover {
+            background-color: #e0e0e0;
+        }
+        
+        .api-status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        
+        .api-status.success {
+            background-color: #E8F5E9;
+            color: #2E7D32;
+        }
+        
+        .api-status.error {
+            background-color: #FFEBEE;
+            color: #C62828;
+        }
+        
+        .documentation-link {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            text-align: center;
+        }
+        
+        .documentation-link a {
+            color: var(--secondary-color);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 1.1rem;
+            display: block;
+            margin-bottom: 8px;
+        }
+        
+        .documentation-link p {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .game-info-box {
+            background-color: #E8F5E9;
+            border-left: 4px solid #4CAF50;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        
+        .game-info-box h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #2E7D32;
+        }
+        
+        .game-info-box p {
+            margin: 5px 0;
+            line-height: 1.5;
+        }
+        
+        .game-info-box strong {
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container setup-container">
+        <div class="header">
+            <h1>CrowdChess Setup</h1>
+            <p>Get ready to play collectively against thatsjustchips</p>
+        </div>
+        
+        <div class="setup-form">
+            <div class="game-info-box">
+                <h3>About This Game</h3>
+                <p>CrowdChess lets multiple people collaborate to play as <strong>thatsjustchipschat</strong> (the bot account) against <strong>thatsjustchips</strong> (human player).</p>
+                <p>Each move is decided by popular vote among all connected viewers.</p>
+            </div>
+            
+            <div class="form-group">
+                <label for="lichess-token">Lichess API Token</label>
+                <input type="password" id="lichess-token" placeholder="Enter your Lichess API token">
+                <small>Required for connecting to Lichess. Create one at <a href="https://lichess.org/account/oauth/token" target="_blank">lichess.org/account/oauth/token</a></small>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="voting-duration">Voting Duration (seconds)</label>
+                    <input type="number" id="voting-duration" min="30" max="300" value="90">
+                </div>
+                
+                <div class="form-group">
+                    <label for="board-orientation">Default Board Orientation</label>
+                    <select id="board-orientation">
+                        <option value="auto">Auto (Match Bot Color)</option>
+                        <option value="white">White</option>
+                        <option value="black">Black</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="server-url">Server URL (Optional)</label>
+                <input type="text" id="server-url" placeholder="Leave empty for default localhost:3000">
+            </div>
+            
+            <div id="api-status" class="api-status" style="display: none;"></div>
+            
+            <div class="setup-actions">
+                <button class="setup-button secondary-button" id="test-connection">Test Connection</button>
+                <button class="setup-button primary-button" id="save-settings">Save & Start</button>
+            </div>
+            
+            <div class="documentation-link">
+                <a href="https://github.com/thatsjustchips/crowdchess" target="_blank">📖 Read Documentation</a>
+                <p>Learn more about CrowdChess and how to set up your Lichess bot account</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Load saved settings if available
+            loadSavedSettings();
+            
+            // Set up event listeners
+            document.getElementById('test-connection').addEventListener('click', testConnection);
+            document.getElementById('save-settings').addEventListener('click', saveSettings);
+        });
+        
+        function loadSavedSettings() {
+            try {
+                const savedSettings = localStorage.getItem('crowdChessSettings');
+                if (savedSettings) {
+                    const settings = JSON.parse(savedSettings);
+                    
+                    // Fill in form fields
+                    document.getElementById('voting-duration').value = settings.votingDuration || 90;
+                    document.getElementById('board-orientation').value = settings.boardOrientation || 'auto';
+                    document.getElementById('server-url').value = settings.serverUrl || '';
+                    
+                    // For security, don't fill in the API token
+                }
+            } catch (error) {
+                console.error('Error loading saved settings:', error);
+            }
+        }
+        
+        async function testConnection() {
+            const apiToken = document.getElementById('lichess-token').value.trim();
+            const serverUrl = document.getElementById('server-url').value.trim() || window.location.origin;
+            const apiStatusElement = document.getElementById('api-status');
+            
+            if (!apiToken) {
+                showApiStatus('Please enter a Lichess API token', 'error');
+                return;
+            }
+            
+            try {
+                apiStatusElement.innerHTML = 'Testing connection...';
+                apiStatusElement.className = 'api-status';
+                apiStatusElement.style.display = 'block';
+                
+                // Send token to API status endpoint
+                const response = await fetch(`${serverUrl}/api-status`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiToken}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.status === 'ok') {
+                    showApiStatus(`Connection successful! Connected as: ${data.account.username}`, 'success');
+                } else {
+                    showApiStatus(`Connection failed: ${data.message || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                showApiStatus(`Connection error: ${error.message}`, 'error');
+            }
+        }
+        
+        function showApiStatus(message, type) {
+            const apiStatusElement = document.getElementById('api-status');
+            apiStatusElement.textContent = message;
+            apiStatusElement.className = `api-status ${type}`;
+            apiStatusElement.style.display = 'block';
+        }
+        
+        function saveSettings() {
+            try {
+                const settings = {
+                    lichessToken: document.getElementById('lichess-token').value.trim(),
+                    botAccount: 'thatsjustchipschat', // Hardcoded for this specific use case
+                    allowedChallenger: 'thatsjustchips', // Hardcoded for this specific use case
+                    votingDuration: parseInt(document.getElementById('voting-duration').value) || 90,
+                    boardOrientation: document.getElementById('board-orientation').value,
+                    serverUrl: document.getElementById('server-url').value.trim()
+                };
+                
+                // Validate required fields
+                if (!settings.lichessToken) {
+                    showApiStatus('Lichess API token is required', 'error');
+                    return;
+                }
+                
+                // Save settings to localStorage (except token for security)
+                const storageSettings = {...settings};
+                delete storageSettings.lichessToken;  // Don't store token in localStorage
+                localStorage.setItem('crowdChessSettings', JSON.stringify(storageSettings));
+                
+                // Redirect to main page with settings in URL params (except token)
+                const searchParams = new URLSearchParams();
+                searchParams.append('bot', settings.botAccount);
+                searchParams.append('challenger', settings.allowedChallenger);
+                if (settings.votingDuration !== 90) searchParams.append('votingTime', settings.votingDuration);
+                if (settings.boardOrientation !== 'auto') searchParams.append('orientation', settings.boardOrientation);
+                
+                // Store token in sessionStorage (more secure than URL)
+                sessionStorage.setItem('lichessToken', settings.lichessToken);
+                
+                // Redirect to main page
+                window.location.href = `index.html${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
+            } catch (error) {
+                showApiStatus(`Error saving settings: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html> 
